@@ -494,7 +494,9 @@ export, écoute, nodal, jouets, arpège.
     enveloppes internes sont 8,8 % plus lentes ;
   - sa sortie est en 16 bits, comme le module ;
   - il demande le SIMD de WebAssembly : Chrome 91, Firefox 89, Safari 16.4 ;
-  - le nodal ne lui donne pas encore de facettes pour les attracteurs
-    (`machines/influence.js`).
+  - ~~le nodal ne lui donne pas encore de facettes pour les attracteurs~~
+    — fait le 09/10 : ses réglages déclarent leur sorte (timbre et coupure :
+    brillance ; harmo, morph, aux, couleur, enveloppes : matière), et son
+    AudioWorklet prend l'opérateur à son heure (`musique_odio01.md` § 6).
 - **La DR-9 et la boîte à rythme** pourraient aussi jouer les percussions de
   Plaits (grosse caisse, caisse claire, charley de Macro).

@@ -265,7 +265,10 @@ onglets (réservés : la page ne les reçoit pas) et peut garder F12.
 - Le banc : les opérateurs se lisent, ils n'agissent pas sur le son — ODIO_01
   non plus ; la table `FACETTES` (ce que chaque réglage a de rythmique,
   d'harmonique, de timbral) est à relire par Cal : nos boîtes à rythme n'ont
-  ni swing ni densité, RYTHME ne capte que l'accent de la basse acide. Les
+  ni swing ni densité, RYTHME ne capte que l'accent de la basse acide.
+  (Depuis : ils agissent, le 29/09 au soir ; le 09/10, chaque réglage déclare
+  sa sorte et 293 réglages sur 353 s'entendent, les batteries ont un swing —
+  `musique_odio01.md` § 6.) Les
   couleurs des lanes sont, depuis le 29/09 au soir, celles d'ODIO_01 en cinq
   jetons nommés de `musique/nodal.css` (`--nd-ryt`… : sombre et clair, au
   contraste AA) — `docs/etudes/musique_theme.md`.

@@ -289,3 +289,221 @@ n'a pas bougé ; ensuite, à 55 %, 35 % et 15 %, il reste « Mix » (en grand à
 Ctrl+Maj+Z le rend. Le bouton du milieu glissé sur le fond déplace la vue de
 (120, 60) pour un geste de (120, 60), sur l'en-tête d'une tuile de (−80, −30)
 pour (−80, −30), sans toucher au zoom.
+
+## 6. Les attracteurs sur tous les nodes (fait le 09/10)
+
+Cal, le 09/10 : « La gestion de ce que font les attracteurs ne me semble pas
+vraiment implémentée : il y a plein de nodes qui ne semblent pas être pris en
+compte par nos paramètres d'attracteurs, si ? Revérifie et avance là-dessus. »
+Il avait raison : sur 350 réglages continus, 31 s'entendaient.
+
+### 6.1 L'audit, rejoué dans Chromium
+
+`musique/pilote_attracteurs.mjs` (portail d'essai neuf, `--audit-seul`) pose
+un module de chaque sorte (43) et trois machines (MINILOGUE XD, ACID-3,
+TR-8S), chacun sous son attracteur : sept anneaux de 400, le centre à 200 du
+bord de la boîte, donc poids 0,5 ; segment des temps 4 à 8 ; chaque réglage
+continu loin de son défaut. Il joue en temps réel et lit, aux temps 2, 6 et
+10, ce que le moteur entend : la valeur que tient l'instrument d'ODIO
+(`getParameter`), l'AudioParam d'un module natif (câblé à la sortie : un nœud
+que rien ne tire n'est pas rendu), la copie qu'il a reçue, la valeur que lit
+la scène d'un jouet, ce que lit le planificateur (arpège, swing). Il ne lit
+que le projet, le moteur et `influenceA` : le même pilote juge la copie
+d'avant (`git archive 99595ec`, servie sur le même port).
+
+| | avant (99595ec) | après |
+|---|---|---|
+| réglages continus | 350 | 353 (le swing, § 6.5) |
+| captés | 31 | 293 |
+| entendus pendant, rendus après | 31 | 293 |
+| hors attracteurs, dit | — | 60 (niveaux, pano, arc, routage ; contrôles branchés à un niveau) |
+
+Par sorte de module, entendus avant → après (sur n continus) : DR-9 0 → 17
+(26), Synthé 6 → 25 (26), Échantillonneur 1 → 4 (5), Lecteur 0 → 0 (1,
+son volume) ; boîte à rythme 1 → 35 (47), Analog 4 → 10 (11), Basse acide
+4 → 8 (9), Numérique 5 → 12 (13), Macro 0 → 14 (15) ; Délai 0 → 3,
+Réverbération 0 → 4, Compresseur 0 → 5 (6), Égaliseur 0 → 11 (12), Filtre
+0 → 2, Distorsion 0 → 3 (4) ; Réverbe 0 → 4, Chorus 0 → 3 (4), RTT-01 0 → 4,
+Comp 0 → 4 (5), EQ-3 1 → 5, Filtre drive 3 → 3, Satura 1 → 4, Crush 1 → 4,
+Table de mix 0 → 4 (8), Volume 0 → 0 (2) ; la console (Piste, Retour, Sortie)
+0 → 0 ; les quatorze jouets et l'horloge 0 → 57 (58) ; MINILOGUE XD 4 → 8 (9),
+ACID-3 0 → 6 (7), TR-8S 0 → 34 (46). Hors pilote, le selftest
+(`music_attracteurs.py`) juge chaque machine qui a un son : MICROFREAK 9,
+POLY-6 2, TAPE-3 4, PLATE-24 3, VARIMU-70 3 contrôles captés et entendus.
+
+### 6.2 Ce qui échappait, et pourquoi
+
+1. **Pas de facette** : la table du 29/09 (`FACETTES_MODULES`, à part, dans
+   `influence.js`) nommait 29 réglages de 10 sortes de modules ; tout module venu après
+   (Macro, les jouets) ou oublié (la DR-9, les six effets d'ici, la console,
+   l'enveloppe et le LFO du Synthé…) n'existait pas pour un attracteur.
+2. **Réglage discret** : `synth.wave` et `analog.wave` avaient une facette ;
+   le banc montrait leur opérateur, `influenceA` les sautait (`s.opts`).
+3. **Une machine ne déclarait que ses contrôles**, et seulement ceux de la
+   table d'ODIO_01 (19) : l'ACID-3, le POLY-6, le TAPE-3, le PLATE-24, le
+   VARIMU-70 et les 44 molettes de voix de la TR-8S, rien. Et de ces 19, neuf
+   ne sont branchés à rien (`ml_v1pitch`, `ml_v2xmod`, `ml_mshape`,
+   `ml_drive`, `ml_lint`, `mf_crise`, `tr_fill`, `tr_shuf`, `tr_scat`) :
+   captés, montrés, jamais entendus.
+4. **Pas d'AudioParam, ou lu ailleurs** : l'arpège se lisait dans le projet
+   au moment de planifier, une scène de jouet lisait ses réglages elle-même ;
+   même captés, ils ne bougeaient pas. Un module natif recevait sa copie au
+   moment où la tranche se planifie, un instrument d'ODIO aussi (son filtre,
+   l'AudioWorklet de Plaits) : jusqu'à l'avance du tampon (0,3 s par défaut)
+   trop tôt.
+5. **L'automation garde la main** : voulu, gardé ; un câble de valeur (jouets)
+   la garde désormais aussi.
+6. **Les jouets** étaient captés à la taille de leurs cellules (230 px), pas
+   à celle de leur carte (780 px) : le moteur et le banc ne mesuraient pas la
+   même distance.
+
+### 6.3 Juste par construction : la facette, propriété déclarée
+
+`musique/facettes.js` porte la règle. Chaque module déclare, dans sa
+définition, la **sorte** de chaque réglage continu (`sortes: { clé: 'sorte' }`
+dans `modules.js`, `jouets/defs.js`, et tout module neuf ; les instruments et
+effets d'ODIO sur les identifiants de leurs descripteurs) ; `modules.js` pose
+sur chaque réglage sa `sorte`, sa `facette` et, hors attracteurs, `hors` (la
+raison). La sorte dit ce qu'est le réglage — un fait ; la table `SORTES` dit
+ce qu'elle a de chaque thème — un goût, à Cal. Une facette propre se déclare
+`['sorte', 'facette']` (le timbre de Plaits et de Macro : brillance, le choix
+du 29/09). Un réglage discret est hors d'office : l'opérateur n'a pas de
+milieu entre deux choix, et un seuil n'est documenté ni par ODIO_01 ni par
+nos études. La table du 29/09 n'est plus écrite, elle est lue
+(`FACETTES_MODULES` existe encore, dérivée) ; chacun de ses choix est gardé
+(le selftest le vérifie), sauf les deux discrets.
+
+**Une machine** : la table d'ODIO_01 décide d'abord (celle de l'auteur) ;
+sinon un contrôle branché (`MACHINE_ENGINES.map`) prend la facette du réglage
+qu'il règle sur le module qui porte le son (`positionDeControle`). Une seule
+vérité : une machine de PLANO n'a rien à déclarer.
+
+**La garde** (`server/tools/music_attracteurs.py`, sous node avec un faux Web
+Audio ; `python3 tools/check.py music_attracteurs`) échoue si un réglage
+continu n'a pas de sorte, si une sorte est inconnue, si une sorte est déclarée
+pour une clé absente, si un branchement de machine vise un réglage que le
+module n'a pas.
+
+**Les sortes et leur facette** (340 réglages de modules, 49 discrets) —
+« proposition » : ni la table du 29/09 ni celle d'ODIO_01 n'en disaient rien.
+
+| sorte | facette | réglages | précédent |
+|---|---|---|---|
+| hauteur | tonalité | 21 (octaves, note racine, octaves d'arpège, cuisson du grille-pain…) | 29/09 : synth.oct, sampler.root |
+| desaccord | tension | 3 (désaccord, LFO → hauteur) | 29/09 : synth.det |
+| glisse | tension | 2 (portamento) | proposition |
+| coupure | brillance | 16 (coupure, ton, amorti) | 29/09 : synth.cut |
+| aigu | brillance | 4 (aigus d'un égaliseur) | 29/09 : eq3.high |
+| resonance | matière | 8 | 29/09 : synth.res |
+| saturation | matière | 10 (drive, bits, biais, mix d'une saturation) | 29/09 : satura.drive |
+| forme | matière | 24 (harmoniques, morph, bruit, copies, part d'un oscillateur) | 29/09 : plaits.harmo |
+| enveloppe | matière | 46 (attaque, déclin, tenue, chute, quantité) | 29/09 : synth.fenv ; ODIO_01 : ml_ega |
+| accord | matière | 19 (l'accord d'une percussion) | n° 54 : « la boîte à rythme n'a rien de tonal » |
+| bande | matière | 14 (gain, fréquence, Q hors des aigus) | proposition |
+| modulation | matière | 8 (LFO, chorus, pleurage) | proposition |
+| espace | matière | 13 (durée, taille, retour, part d'effet) | proposition |
+| accent | accents | 1 | 29/09 : acid.accent |
+| dynamique | accents | 9 (compresseurs) | proposition |
+| cadence | densité | 9 (débit, billes, temps d'écho) | proposition |
+| duree | densité | 19 (durée d'arpège, d'une note émise, attentes) | proposition |
+| mouvement | densité | 17 (la physique des jouets) | proposition |
+| swing | swing | 2 | ODIO_01 : tr_shuf |
+| niveau | hors | 39 | ODIO_01 : « le volume, le tempo, les leds n'ont rien à dire à un attracteur » |
+| pano, arc, routage | hors | 7 | la place stéréo, l'arc d'énergie, une coupure : leurs propres gestes |
+
+### 6.4 Le moteur : tout réglage capté s'entend, à son temps
+
+`machines/influence.js` (`appliquer`) passe par le moyen de chaque module :
+un module d'ODIO ou un jouet qu'on traverse, `setAt(k, v, instant)` ; un
+module natif, la **copie entendue** (`Graph.entendu`) posée à l'instant de la
+tranche (`Graph.aLInstant` : ses `setP` glissent à cet instant, jamais
+avant) — ce qu'il lit à l'attaque d'une note la prend à la tranche près.
+Le planificateur (l'arpège, le swing) et les scènes des jouets (`Jeu.V`,
+`Graph.valeur`) lisent ce que le moteur entend ; une molette tournée pendant
+qu'un attracteur parle ne le lui retire plus (`Graph.update`). Un instrument
+d'ODIO reçoit l'instant (`setParameter(id, valeur, temps)`, `odio/types.js`) :
+Macro et le Numérique datent leurs réglages jusque dans l'AudioWorklet
+(posés au quantum de leur heure), leur filtre et la résonance de la basse
+acide aussi. Un réglage à pas (octave, copies, billes) prend l'opérateur
+arrondi à son pas.
+
+### 6.5 Le swing
+
+La facette « swing » de RYTHME n'avait rien à capter : aucun moteur n'en
+avait. La DR-9 et la boîte à rythme ont un réglage Swing (50 à 75 %) : la
+seconde double croche de chaque paire tombe à swing % de la paire — la loi de
+la MPC de Roger Linn (« 50 % swing means no swing, 66 % is a perfect triplet
+swing », entretien à Attack Magazine, 2013). Lu au moment de planifier les
+coups, comme l'arpège (`PLANIFIES` : il ne s'automatise pas). La molette
+SHUFFLE de la TR-8S y est branchée, 0 → 50 %, à fond → 75 % (la loi de la
+TR-8S n'est pas documentée ici : choix de réglage).
+
+### 6.6 Ce que fait un attracteur, à le voir
+
+- **Le nodal** : l'attracteur frôlé ou choisi (son disque, son segment)
+  cerne chaque tuile qu'il capte et dit sur elle son poids et ses réglages
+  par facette (« 0.67 · brillance 1 · matière 3 », « 2 sans effet » quand un
+  contrôle n'est branché à rien ou qu'on le tient) ; le détail au survol de
+  l'étiquette.
+- **Une tuile choisie** est reliée par un fil à chaque attracteur qui la
+  capte (le poids, le nombre de réglages, « parle ») ; son panneau a une
+  section « Attracteurs » : chacun, son poids, s'il parle, et réglage par
+  réglage la valeur → l'opérateur, ou « tenu », « non branché » ; aucun :
+  ce qu'elle offre (« matière 3, brillance 1 ») et le geste qui en fait
+  naître un ; rien à capter : pourquoi.
+- **Le banc** : un segment dit combien de réglages et de blocs son attracteur
+  capte ; chaque ligne, son poids (« ×0.67 »), grisée quand elle ne s'entend
+  pas.
+
+Captures (sombre et clair) : `<sortie>/dark_1_survol.png`,
+`dark_2_tuile.png`, `dark_3_lecture.png`, `dark_4_offre.png`, et `light_…`.
+
+### 6.7 Mesuré (hors temps réel, `renderMix`, comme l'export)
+
+Une phrase de synthé, un attracteur TIMBRE posé à 0,9 rayon (poids 0,1 :
+le réglage ramené aux neuf dixièmes vers son défaut) sur les temps 8 à 16 ;
+le centre de gravité du spectre et le niveau par mesure de quatre temps :
+
+| | mesures 1-2 | 3-4 (il parle) | 5-6 | crête |
+|---|---|---|---|---|
+| filtre natif, coupure 400 → 2 200 Hz | 339, 340 Hz | 1 160 Hz | 346, 340 Hz | −15,2 dBFS |
+| filtre d'ODIO, 300 → 1 110 Hz | 280 Hz | 716 Hz | 281, 280 Hz | −3,4 dBFS |
+| Macro, timbre 0,05 → 0,46, coupure 900 → 14 490 Hz | 598, 556 Hz | 2 257 Hz | 617, 554 Hz | −15,1 dBFS |
+
+Ni silence ni écrêtage ; avant que Macro reçoive l'instant, sa deuxième
+mesure montait déjà (971 Hz). Le swing (DR-9, charley à chaque double
+croche, 75 %, un attracteur qui le ramène à 52,5 %) : 62,5 ms de retard par
+double croche impaire, 6,3 ms pendant qu'il parle, 62,5 ms après. Le rendu
+de 12 s : 0,3 s (filtres), 0,6 à 1,0 s avec l'AudioWorklet de Macro (une
+voix) — la charge de l'AudioWorklet reste celle de Macro, l'attracteur n'y
+ajoute qu'un message daté par changement. Rien n'a été écouté par un humain :
+le goût est à Cal.
+
+### 6.8 Ce qui reste, et les questions à Cal
+
+- **La table des sortes**, sorte par sorte (§ 6.3) : surtout ce qui n'a pas
+  de précédent — l'espace (réverbe, écho) et la modulation en matière, la
+  dynamique en accents, la physique des jouets, les durées et les cadences
+  en densité, l'accord d'une percussion en matière (n° 54), le glissé en
+  tension.
+- **Le neutre** (question ouverte n° 5 d'ODIO_01) : au centre, l'opérateur
+  vaut le réglage ; au bord, le défaut. Un attracteur ramène donc vers les
+  défauts à mesure qu'on s'éloigne — c'est la formule ; est-ce le geste
+  voulu ?
+- **Les réglages discrets** (49 : formes d'onde, types de filtre, gammes,
+  modèles de Plaits) : un seuil ? Non documenté, donc exclus.
+- **Les contrôles d'ODIO_01 sans branchement** (huit, `tr_shuf` est branché
+  au swing) : le moteur n'a pas leur réglage (hauteur du VCO 1, modulation
+  croisée, forme, drive et intensité du minilogue, montée de la coupure de
+  la MicroFreak, fill et scatter de la TR-8S).
+- **FM-6** (table de branchement vide), **STRINGS-4** (son volume seul), la
+  **table de mix** (ses tranches se règlent par `pousserTranche`, elle n'est
+  pas au catalogue, § 1 n° 44) : rien n'y est capté.
+- **La précision** : ce qu'un module natif ne tient pas par un AudioParam
+  (la durée de la réverbération, qui recalcule sa réponse ; le drive de la
+  distorsion ; un type de filtre) prend la copie quand la tranche se
+  planifie ; un instrument qui lit ses réglages à l'attaque (Analog, la boîte
+  à rythme) les prend à la tranche près (25 ms) ; les jouets qu'on traverse
+  (REEL-2, RESSORT, ALCHIMIE) aussi.
+- **La carte d'un jouet** a sa hauteur mesurée dans la page ; le moteur prend
+  celle de sa définition (quelques pixels d'écart).
