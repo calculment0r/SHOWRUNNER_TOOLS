@@ -96,3 +96,28 @@
 .ent-menu button span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ent-menu button.on, .ent-menu button:hover { background: var(--sel-bg); color: var(--ink); }
 .ent-menu .mi { flex: none; width: 28px; height: 28px; border-radius: var(--r1); background: var(--panel2) center / cover no-repeat; display: flex; align-items: center; justify-content: center; color: var(--cy); }
+
+/* ── la rangée (layout « rangee ») : la barre de création de la page Vidéo, comme les références
+   de la barre d'Image — une vignette, son jeton en surimpression, le nom dessous ; le « + » au bout ── */
+.ent.ent-row { flex-direction: row; align-items: flex-start; gap: 8px; flex-wrap: wrap; }
+.ent-row .ent-cats { flex-direction: row; flex-wrap: wrap; gap: 6px 10px; }
+.ent-row .ent-cat { flex-direction: row; align-items: flex-start; gap: 4px; }
+.ent-row .ent-cat + .ent-cat { padding-left: 10px; box-shadow: inset 1px 0 0 var(--line); }
+.ent-row .ent-slots { gap: 5px; flex-wrap: nowrap; }
+.ent-row .ent-slot { width: 52px; gap: 2px; }
+.ent-row .ent-im { width: 52px; height: 44px; }
+.ent-row .ent-tok {
+  position: absolute; left: 2px; top: 30px; max-width: 48px; padding: 0 3px; border-radius: 2px; background: var(--veil);
+  font-size: 7.5px; letter-spacing: .02em; pointer-events: none;
+}
+.ent-row .ent-name { font-size: 9.5px; line-height: 12px; color: var(--ink2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ent-row .ent-ico { font-size: 16px; }
+.ent-row .ent-ico.snd { position: absolute; left: 3px; top: 2px; font-size: 10px; color: var(--grn2); }
+.ent-row .ent-pack { align-self: center; height: 22px; font-size: 8.5px; padding: 0 6px; }
+.ent-row .ent-drop {
+  flex: none; width: 44px; min-height: 44px; height: 44px; padding: 0; justify-content: center;
+  font-family: var(--f-mono); font-size: 18px; color: var(--ink3);
+}
+.ent-row .ent-drop:hover { color: var(--or); }
+.ent-row .ent-use { align-self: center; }
+.ent-row.drop-on .ent-drop { color: var(--or); box-shadow: inset 0 0 0 1px var(--or); }

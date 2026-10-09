@@ -412,7 +412,8 @@ export function createMultishot(box, o = {}) {
     if (t === S.total) return;
     S.total = t;
     trimEnd(S.shots, t);
-    if (fromHere) { o.ontotal?.(t); changed(); }
+    if (fromHere) o.ontotal?.(t);
+    changed();   // les durées des plans ont bougé : la page garde les plans (et le texte, s'il les écrit)
     paint();
   }
   paint();
