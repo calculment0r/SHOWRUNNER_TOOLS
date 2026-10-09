@@ -253,6 +253,14 @@ function elementParts(it) {   // le même compte que element_parts() de server/t
   const imgs = refs.filter((r) => !AUDIO_EXT.test(r.file || ''));
   // la voix est rangée à part (element.voices) ; un son dans refs (ancienne forme) compte aussi
   const voices = [...(it.element?.voices || []), ...refs.filter((r) => AUDIO_EXT.test(r.file || ''))].slice(0, 1);
+  if (it.element?.type === 'object') {   // object_parts() : la planche de l'objet, puis ses vues gardées — 4 images au plus
+    const sheet = imgs.filter((r) => r.role === 'sheet').slice(0, 1);
+    const OLD = ['face · 0°', '3/4 avant gauche · 45°', 'gauche · 90°', '3/4 arrière gauche · 135°', 'dos · 180°',
+      '3/4 arrière droit · 225°', 'droite · 270°', '3/4 avant droit · 315°'];   // objet_vues._ref_angle : les libellés d'avant le 09/10
+    const views = imgs.filter((r) => r.role === 'view' && (Number.isInteger(r.az) || OLD.includes((r.label || '').trim())));
+    const n = Math.min(4, sheet.length + views.length);
+    return { imgs: n ? imgs.slice(0, n) : imgs.slice(0, 2), voices };
+  }
   const chosen = ['face', 'full body'].map((role) => imgs.find((r) => r.role === role)).filter(Boolean);
   return { imgs: chosen.length ? chosen : imgs.slice(0, 2), voices };
 }

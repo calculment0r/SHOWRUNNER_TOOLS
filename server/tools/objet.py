@@ -20,10 +20,16 @@ Ce qui tourne aujourd'hui, et seulement ça :
   Character Factory : `up_axis_in: "Y"`), il n'est pas réorienté. Il est
   rangé dans le dossier de l'élément (`mesh-001.glb`…) et listé dans
   `element.meshes` : le GLB n'est pas une sorte de la bibliothèque.
-- Les vues : **aucun modèle retenu** (étude du 28/09, §3.4 : Krea 2 1/4,
-  Qwen 2.1 turbo 0/4, LoRA orbit chargé à moitié 1/3). La page les
-  accepte à la main (une image de la bibliothèque, rôle `view`) ; aucun
-  travail ne les fabrique.
+- Les vues : l'étude du 28/09 n'avait retenu aucun modèle (§3.4 : Krea 2
+  1/4, Qwen 2.1 turbo 0/4, LoRA orbit chargé à moitié 1/3). Depuis le
+  09/10, le parcours « propose les vues, on valide, on affine » est dans
+  server/tools/objet_vues.py (docs/etudes/objet_scenes_3d.md) : un plan
+  d'angles à l'arrivée d'une image, un travail par vue (générateur derrière
+  l'interrupteur `objet_vues`, factice par défaut), garder / refaire /
+  rejeter, l'affinage depuis les vues gardées, les rendus et la planche.
+  TRELLIS.2 ne lit toujours qu'une image : le mesh dit combien de vues
+  gardées attendaient un multi-vues (`views_kept`). Une vue posée à la main
+  (une image de la bibliothèque, rôle `view`) reste possible.
 
   GET  /api/objet/state        la chaîne : ce qui marche, ce qui attend
   GET  /api/objet/objects      les éléments objet, avec leurs meshes
@@ -154,7 +160,7 @@ def comfy_endpoints() -> list[str]:
 def state(req=None):
     with _state_lock:
         if time.time() - _state_cache["t"] < 60 and _state_cache["v"]:
-            return _state_cache["v"]
+            return _with_views(_state_cache["v"])
     machines = []
     for ep in comfy_endpoints():
         up, why = jobs.endpoint_alive(ep)
@@ -171,10 +177,18 @@ def state(req=None):
     ready = tpl and any(m["up"] and not m.get("missing") for m in machines)
     v = {"trellis": {"wired": wired(), "ready": ready, "template": str(template_path()), "template_ok": tpl,
                      "machines": machines, "faces": FACES, "pad_factor": 1.0},
-         "views": {"model": None, "labels": list(VIEW_LABELS)}}
+         "views": {"labels": list(VIEW_LABELS)}}
     with _state_lock:
         _state_cache.update(t=time.time(), v=v)
-    return v
+    return _with_views(v)
+
+
+def _with_views(v: dict) -> dict:
+    """La chaîne des vues (objet_vues.py) : le générateur câblé, les angles, les passes, les
+    classes — lue à chaque fois (un réglage changé se voit au rechargement de la page)."""
+    from tools import objet_vues
+    m = objet_vues.meta()
+    return {**v, "views": {**v["views"], "model": None if m["gen"]["id"] == "factice" else m["gen"]["name"]}, "vues": m}
 
 
 # ── les objets ──────────────────────────────────────────────
@@ -267,11 +281,27 @@ def _source(ctx) -> tuple[str, dict, dict]:
     if not it or not _is_object(it):
         raise RuntimeError(f"objet introuvable : {eid}")
     library.check_write(it)   # revalidé au départ : le travail ne compte pas sur la route qui l'a mis en file
-    refs = [r for r in it["element"]["refs"] if r.get("role") == "view"] or it["element"]["refs"]
+    # l'image choisie (le plan des vues, objet_vues.py) ; TRELLIS.2 n'en lit qu'une : les vues gardées
+    # attendent une reconstruction multi-vues, et le mesh dit combien il y en avait (`views_kept`)
+    from tools import objet_vues
+    v = objet_vues.plan_of(it)
+    refs = [r for r in it["element"]["refs"] if r["file"] == v["source"].get("file")] \
+        or [r for r in it["element"]["refs"] if r.get("role") == "view"] or it["element"]["refs"]
     if not refs:
         raise RuntimeError("cet objet n'a pas d'image")
     ctx.job["thumb"] = library.public(it).get("thumb_url")
     return eid, it, refs[0]
+
+
+def _kept(it: dict) -> int:
+    """Les vues gardées de l'objet (hors l'image choisie) : celles que le multi-vues lirait."""
+    from tools import objet_vues
+    return sum(1 for s in objet_vues.plan_of(it)["slots"] if s["state"] == "gardee")
+
+
+def _multi_note(n: int) -> str:
+    return (f" · {n} vue{'s' if n > 1 else ''} gardée{'s' if n > 1 else ''} attend{'ent' if n > 1 else ''} le multi-vues"
+            if n else "")
 
 
 def cube_glb(dest: Path, size: float = 1.0) -> Path:
@@ -325,9 +355,11 @@ def run_factice(ctx):
         ctx.progress(0.1 + 0.2 * k, msg)
         time.sleep(0.6)
     glb = cube_glb(ctx.workdir / "cube.glb")
+    kept = _kept(it)
     entry = attach_mesh(eid, glb, {"factice": True, "job": ctx.job["id"], "machine": jobs.machine_of(ctx.endpoint),
-                                   "from": ref["file"], "model": "factice · cube de contrôle, pas TRELLIS.2"})
-    return {"element": eid, "mesh": entry["file"], "note": "factice : un cube, pas TRELLIS.2"}
+                                   "from": ref["file"], "model": "factice · cube de contrôle, pas TRELLIS.2",
+                                   "views_kept": kept, "read": 1})
+    return {"element": eid, "mesh": entry["file"], "note": "factice : un cube, pas TRELLIS.2" + _multi_note(kept)}
 
 
 def validate(c: Comfy, g: dict) -> list[str]:
@@ -350,10 +382,14 @@ def validate(c: Comfy, g: dict) -> list[str]:
         req = (spec.get("input") or {}).get("required") or {}
         for name, conf in req.items():
             if name not in node["inputs"]:
-                problems.append(f"{ct} : entrée « {name} » manquante")
+                # une entrée dynamique (Autogrow, DynamicCombo) s'écrit par ses enfants : « images.image_1 »
+                # (finalize_prefix de comfy_api/latest/_io.py ; gabarit d'AnyAngle Studio T8)
+                if not any(k.startswith(name + ".") for k in node["inputs"]):
+                    problems.append(f"{ct} : entrée « {name} » manquante")
                 continue
             val = node["inputs"][name]
-            if isinstance(val, list) or (ct == "LoadImage" and name == "image"):
+            # le fichier vient d'être déposé, sous le nom que ComfyUI a rendu : l'image, le GLB
+            if isinstance(val, list) or (ct, name) in (("LoadImage", "image"), ("Load3DAdvanced", "model_file")):
                 continue
             opts = None
             if isinstance(conf, list) and conf and isinstance(conf[0], list):
@@ -479,11 +515,12 @@ def run_mesh(ctx):
     ctx.progress(0.98, "rapatrie le GLB")
     glb = ctx.comfy.download(files[0], ctx.workdir / "trellis2.glb")
     secs = round(time.time() - t0, 1)
+    kept = _kept(it)
     entry = attach_mesh(eid, glb, {"seed": seed, "job": ctx.job["id"], "machine": machine,
                                    "from": ref["file"], "model": "TRELLIS.2 · image unique", "pad_factor": 1.0,
-                                   "target_faces": FACES, "secs": secs, "stages_s": seen})
+                                   "target_faces": FACES, "secs": secs, "stages_s": seen, "views_kept": kept, "read": 1})
     return {"element": eid, "mesh": entry["file"], "secs": secs,
-            "note": f"{entry.get('faces', '?')} faces · {secs:.0f} s sur {machine}"}
+            "note": f"{entry.get('faces', '?')} faces · {secs:.0f} s sur {machine}" + _multi_note(kept)}
 
 
 def register(app) -> None:
@@ -511,7 +548,8 @@ def selftest(call, ok) -> None:
     st, lst = call("GET", "/api/objet/objects")
     ok(st == 200 and any(x["id"] == o["id"] for x in lst["items"]), "objet : la liste des objets")
     st, s = call("GET", "/api/objet/state")
-    ok(st == 200 and "trellis" in s and s["views"]["model"] is None, "objet : l'état de la chaîne (aucun modèle de vues)")
+    ok(st == 200 and "trellis" in s and s["views"]["model"] is None and s["vues"]["gen"]["id"] == "factice",
+       f"objet : l'état de la chaîne (les vues en factice par défaut) ({s.get('vues', {}).get('gen')})")
     # une voie « image » locale (instance d'essai) : pas de ComfyUI à interroger, pas de 500
     lanes = config.CFG.get("lanes")
     config.CFG["lanes"] = {**(lanes or {}), "image": ["local"]}
