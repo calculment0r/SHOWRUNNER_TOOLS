@@ -180,7 +180,7 @@ export function createInspector(app) {
         rec ? null : el('p', { class: 'why' }, 'Variations : image sans recette (déposée ou faite ailleurs) — une carte Générer la prend en référence.')));
       const d = drafts.get(n.id) || { prompt: '', model: 'qwen21' };
       drafts.set(n.id, d);
-      const ta = el('textarea', { class: 'fld', rows: 3, id: 'insp-edit', placeholder: d.model === 'qwen21' ? 'la consigne, en anglais : « Change the jacket in <image1> to red leather »' : 'la consigne, en anglais : « Recolor the jacket to red leather »' });
+      const ta = el('textarea', { class: 'fld', rows: 3, id: 'insp-edit', placeholder: 'la consigne, en anglais : « Recolor the jacket to red leather »' });
       ta.value = d.prompt;
       const run = b('Éditer', () => app.gen.edit(n.id, { tool: 'instruct', model: d.model, prompt: d.prompt }), { disabled: !d.prompt.trim() });
       const why = el('span', { class: 'why' }, d.prompt.trim() ? '' : 'écrivez une consigne');
@@ -405,8 +405,8 @@ export function createInspector(app) {
           (e.ok || e.held) && e.idx > 0 ? b('↑', () => app.moveWire(e.link.id, -1), { title: 'passer avant (l’ordre des références compte)' }) : null,
           b('×', () => app.cutLink(e.link.id), { title: 'couper ce fil' }));
       })) : null,
-      hint(n.model === 'qwen21' ? 'dans l’ordre : <image1>, <image2>, <image3> — nommez-les dans le prompt'
-        : n.model === 'krea2' ? '1 référence : la personne ou l’objet à reprendre · 2 : la scène d’abord, puis le sujet'
+      hint(n.model === 'qwen21' ? 'dans l’ordre : @image1, @image2… (un élément : @element1) — nommez-les dans le prompt avec @'
+        : n.model === 'krea2' ? '1 référence : la personne ou l’objet à reprendre · 2 : la scène d’abord, puis le sujet ; @ les nomme (@image1, @element1)'
           : m?.refs_why || 'ce modèle ne prend pas de référence'),
       row(b('Ajouter depuis la bibliothèque', () => app.pickRefs(n.id), { disabled: m && refs.length >= m.refs,
         title: m && refs.length >= m.refs ? (m.refs ? `${m.name} prend ${m.refs} références au plus` : m.refs_why) : 'posées à gauche de la carte, branchées' })),

@@ -40,6 +40,7 @@
 import { api, el, toast, href, pick, dropZone, kindFr, etypeFr } from './shell.js';
 import { sortable, moveItem } from './refs.js';
 import { menu } from './menu.js';
+import { TOKEN_RX } from './mentions.js';
 
 export const CATS = [   // l'ordre d'affichage ; `token` fait le jeton, `kinds` ce qui s'y range
   { id: 'image', label: 'Images', token: 'image', kinds: ['image'] },
@@ -51,8 +52,9 @@ const CAT_OF = { image: 'image', element: 'element', video: 'video', audio: 'aud
 const RES_FR = { image: ['image', 'images'], video: ['vidéo', 'vidéos'], audio: ['son', 'sons'], files: ['fichier', 'fichiers'] };
 const ONE_FR = { image: 'une image', video: 'une vidéo', audio: 'un son', files: 'un fichier' };
 const plural = (n, r) => `${RES_FR[r][n > 1 ? 1 : 0]}`;
-// un jeton : @ + une sorte + une place ; pas après une lettre (une adresse mél n'en est pas un)
-export const TOKEN_RX = /(?<![\p{L}\p{N}_@])@([\p{L}_]+)(\d*)/gu;
+// un jeton : @ + une sorte + une place ; pas après une lettre (une adresse mél n'en est pas un) — le motif commun
+// à tous les outils (commun/mentions.js ; server/core/mentions.py le compile pour chaque modèle)
+export { TOKEN_RX };
 const esc = (s) => s.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
 
 export function createEntrees(box, { limits = { image: 9, video: 3, audio: 3, files: 12 }, cost = defaultCost, roles = {},

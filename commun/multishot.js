@@ -4,8 +4,8 @@
 // qu'on peut affecter ; une mini timeline, la durée découpée en plans, réglable avec des poignées ; un mode automatique ». On
 // reste en langage naturel : la frise écrit les balises (commun/multishot_texte.js : [Shot n], « (S1) says: <d>[langue] … </d> »).
 // Inspiré du nœud « Director » de ComfyUI (Bernini Director : une frise de segments, un prompt par segment ou un prompt global,
-// des références par segment) ; les plans de H3 ne portent, à notre connaissance, que leur ordre : la durée de chaque plan est
-// donc surtout une aide de mise en scène (case facultative pour l'écrire dans le texte, éteinte par défaut, à essayer en A/B).
+// des références par segment). Le guide officiel d'H3 (relu le 09/10) donne la forme du temps de coupe : chaque plan suivant
+// commence par « At 00:03.500, » — la durée de chaque plan s'écrit donc toujours (commun/multishot_texte.js, compose).
 //
 // Cal, 09/10 : « le multishot ne va pas car on ne peut pas drag and drop les éléments ou références dedans car il est en
 // pop-up : on va faire que le mode multishot s'affiche en bas au-dessus du fil comme la barre de création pour les images …
@@ -24,9 +24,9 @@
 //     total: 124,                  // la durée de la vidéo, en images (24 i/s)
 //     grid: [124, 141, …],         // les durées permises (/api/movie/options, frames) ; sans, la durée ne se change pas ici
 //     shots, desc,                 // les plans gardés ; sinon le prompt, relu ([Shot n]) ou découpé en phrases
-//     lang, durations,             // la langue des répliques ; la durée de chaque plan écrite dans le texte (à essayer)
+//     lang,                        // la langue des répliques
 //     mentions: () => [{ token, label, thumb }],   // les entrées nommables : qui parle, les vignettes de chaque plan
-//     onchange({ shots, text, lang, durations }),  // à chaque geste
+//     onchange({ shots, text, lang }),             // à chaque geste
 //     ontotal(frames),             // la poignée de fin a changé la durée
 //     drop: { kinds, via, onitems(items, i) → Promise<['@element1', …]> },   // un dépôt sur le plan i
 //     bindField(textarea),         // le champ du plan choisi : jetons en couleur, menu « @ » (commun/entrees.js)
@@ -72,13 +72,13 @@ function startShots({ shots, desc, total }) {
 export function createMultishot(box, o = {}) {
   css();
   const grid = Array.isArray(o.grid) && o.grid.length > 1 ? [...o.grid].sort((a, b) => a - b) : null;
-  const S = { total: Math.round(o.total || 124), shots: [], sel: 0, lang: o.lang || 'fr', durations: !!o.durations, dropAt: -1 };
+  const S = { total: Math.round(o.total || 124), shots: [], sel: 0, lang: o.lang || 'fr', dropAt: -1 };
   S.shots = startShots({ shots: o.shots, desc: o.desc, total: S.total });
   const mentions = () => (typeof o.mentions === 'function' ? o.mentions() : o.mentions) || [];
   const maxF = () => (grid ? grid[grid.length - 1] : S.total);
   const pct = (f) => `${(f / maxF()) * 100}%`;
-  const text = () => compose(S.shots, { lang: S.lang, durations: S.durations });
-  const changed = () => o.onchange?.({ shots: clone(S.shots), text: text(), lang: S.lang, durations: S.durations });
+  const text = () => compose(S.shots, { lang: S.lang });
+  const changed = () => o.onchange?.({ shots: clone(S.shots), text: text(), lang: S.lang });
 
   // ── les nœuds qui restent : la tête, la frise, le plan choisi ──
   const head = el('div', { class: 'ms-head' });
@@ -127,9 +127,6 @@ export function createMultishot(box, o = {}) {
             } }))]);
         } }, 'Auto…'),
       el('span', { class: 'sp' }),
-      el('label', { class: 'ms-chk', title: 'H3 ne documente, à notre connaissance, que l’ordre des plans : à essayer en A/B' },
-        el('input', { type: 'checkbox', checked: S.durations ? true : null, onchange: (e) => { S.durations = e.target.checked; changed(); } }),
-        'durées dans le texte'),
       el('select', { class: 'fld ms-lang', 'aria-label': 'la langue des répliques', title: 'la langue des répliques',
         onchange: (e) => { S.lang = e.target.value; changed(); } },
       ...Object.entries(LANG).map(([k, v]) => el('option', { value: k, selected: S.lang === k ? true : null }, v))));
@@ -150,6 +147,7 @@ export function createMultishot(box, o = {}) {
   }
   function paintTl() {
     tl.setAttribute('aria-label', `la vidéo, ${sec(S.total)}, découpée en ${S.shots.length} plans`);
+    tl.title = 'chaque plan suivant commence par son temps de coupe, « At 00:03.500, » (le guide officiel d’H3, § 4.2)';
     N.segs = S.shots.map((p, i) => {
       const s = el('button', { class: `ms-seg c${i % 4}${i === S.sel ? ' sel' : ''}`, type: 'button', 'data-i': i,
         title: `plan ${i + 1} · ${sec(p.frames)} — clic : l’éditer · glisser : le déplacer · Alt + ← → : le déplacer` }, ...segBody(p, i));
@@ -426,7 +424,7 @@ export function createMultishot(box, o = {}) {
     },
     setTotal: (f) => setTotal(f),
     setLang(l) { S.lang = l; paintHead(); },
-    get: () => ({ shots: clone(S.shots), total: S.total, lang: S.lang, durations: S.durations, text: text() }),
+    get: () => ({ shots: clone(S.shots), total: S.total, lang: S.lang, text: text() }),
     text,
     paint,
     select,

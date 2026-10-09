@@ -94,7 +94,7 @@ import time
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from core import config, jobs, library, machines
+from core import config, jobs, library, machines, mentions
 from core.comfy import Comfy, ComfyError, fill
 from core.http import HttpError
 
@@ -143,7 +143,21 @@ RECIPE_LORAS = (PEOPLE, CINE, TURBO_V4)
 QUALITY_TAG = "r34l1sm. DY."   # en tête de la description (Cal) : les déclencheurs de People et du LoRA cinéma
 LATENT_UP = "minimax_h3_latent_upscaler_3d_bf16.safetensors"
 DRAFT_SIGMAS = "0.8000, 0.6316, 0.3158, 0.0000"
-METHODS = {   # les préréglages : `canvas` la toile, `stages` 2 = brouillon puis l'agrandisseur latent
+METHODS = {   # les préréglages : `canvas` la toile (au format 2,4:1), `stages` 2 = brouillon puis l'agrandisseur latent
+    # Cal, 09/10 : « on veut pouvoir facilement faire plusieurs résolutions, et même des plus faibles que celles
+    # proposées… on n'a que des trucs grands, même en brouillon ». L'Esquisse EST le premier étage du Brouillon
+    # (768 × 320, la recette de Cal), rendu seul : sa toile est déjà rendue par la recette validée, rien d'inventé ;
+    # le Léger double son aire, en un étage. Leur temps se mesure à la vitesse du Brouillon de Cal (`rate_from`).
+    "esquisse": {"label": "Esquisse", "sub": "le plus rapide · 768 × 320 en un étage", "canvas": (768, 320), "stages": 1,
+                 "steps": (4, 6, 8), "default_steps": 8, "refs": "planche", "rate_from": "brouillon",
+                 "cal": {"seconds": 406, "frames": 192, "what": "le premier étage du DRAFT de Cal (6 min 46 s les deux étages, 192 images)"},
+                 "note": "768 × 320 en un étage (≈ 0,23 Mpx) : le premier étage du Brouillon, sans l'agrandisseur latent. "
+                         "Pour essayer une mise en scène, un dialogue, un cadrage : même graine, le Brouillon en refera le haut."},
+    "leger": {"label": "Léger", "sub": "rapide · 1152 × 480 en un étage", "canvas": (1152, 480), "stages": 1,
+              "steps": (4, 6, 8), "default_steps": 8, "refs": "planche", "rate_from": "brouillon",
+              "cal": {"seconds": 406, "frames": 192, "what": "à l'échelle du DRAFT de Cal (6 min 46 s pour 192 images)"},
+              "note": "1152 × 480 en un étage (≈ 0,55 Mpx), l'aire des toiles « brouillon » de H3 Studio (864 × 480) et "
+                      "un peu plus. Non mesuré sur les DGX : le temps est à l'échelle du Brouillon de Cal."},
     "brouillon": {"label": "Brouillon", "sub": "rapide · 1536 × 640 en deux étages", "canvas": (1536, 640), "stages": 2,
                   "steps": (4, 6, 8), "default_steps": 8, "refs": "planche",
                   "cal": {"seconds": 406, "frames": 192, "what": "DRAFT, 6 min 46 s pour 192 images"},
@@ -192,7 +206,7 @@ ROLE_FR = {"face": "visage", "full body": "plein pied", "expression": "expressio
 # Les entrées du mode Références, appelées par position (décision de Cal du 29/09) :
 # @image1…, @element1…, @video1…, @audio1… — commun/entrees.js fait le même compte
 INPUT_CATS = ("image", "element", "video", "audio")
-TOKEN_RX = re.compile(r"(?<![^\W_]|[@_])@([^\W\d]+)(\d*)")
+TOKEN_RX = mentions.RX   # la grammaire commune (core/mentions.py) : @image1, @element1, @video1, @audio1
 AUDIO_EXT = (".wav", ".mp3", ".flac", ".m4a", ".ogg")
 SECTION_HEADS = ("integrated_multimodal_description:", "subject_definitions:")
 CAMERA = [   # le vocabulaire contrôlé de MiniMax (corpus/h3_style_rules.md) et sa phrase
@@ -253,6 +267,65 @@ def draft_canvas(w: int, h: int) -> tuple[int, int]:
     return _r32(w / 2), _r32(h / 2)
 
 
+# ── l'échelle des toiles, par format (Cal, 09/10) ───────────
+# Un format, puis un préréglage : la toile en découle. Les aires sont celles de la recette de Cal au 2,4:1
+# (Esquisse 768 × 320, Léger 1152 × 480, Qualité 1920 × 800), reportées à chaque format ; le Brouillon est le
+# double exact de l'Esquisse (son premier étage, l'agrandisseur fait ×2). Chaque côté est un multiple de 32
+# (les entrées width/height de MiniMaxH3ImageToVideo et MiniMaxH3ReferenceToVideo : min 32, step 32 ;
+# CANVAS_MULTIPLE du nœud) ; on garde le couple dont le rapport est le plus proche, à ± 15 % de l'aire. Le nœud
+# n'a pas d'autre borne (MAX_PIXELS = 768 × 1344 ne sert qu'à `adapt_canvas`, pour une image ou une vidéo de
+# référence) ; « The shorter side is set to 768 pixels by default » (README MiniMax-AI/MiniMax-H3) : 768 × 1344
+# est la toile du Brouillon en 9:16 — et 1344 × 768 en 16:9, la toile par défaut du nœud.
+FORMATS = [   # (id, libellé, rapport)
+    ("2.4:1", "2,4:1 · scope", 2.4), ("21:9", "21:9", 21 / 9), ("16:9", "16:9", 16 / 9), ("4:3", "4:3", 4 / 3),
+    ("1:1", "1:1", 1.0), ("3:4", "3:4", 3 / 4), ("9:16", "9:16", 9 / 16),
+]
+DEFAULT_FORMAT = "2.4:1"
+TIER_AREA = {"esquisse": 768 * 320, "leger": 1152 * 480, "qualite": 1920 * 800}
+
+
+def fit32(ratio: float, area: float) -> tuple[int, int]:
+    """La toile au rapport `ratio`, d'aire ≈ `area`, en multiples de 32 : le rapport le plus juste à ± 15 %
+    de l'aire, puis l'aire la plus proche, puis la plus petite."""
+    best = None
+    for h in range(32, 4097, 32):
+        for w in {max(32, (h * ratio) // 32 * 32), max(32, -(-h * ratio // 32) * 32)}:
+            a = w * h
+            if not 0.85 <= a / area <= 1.15:
+                continue
+            k = (round(abs(math.log((w / h) / ratio)), 4), round(abs(math.log(a / area)), 4), a)
+            if best is None or k < best[0]:
+                best = (k, (int(w), int(h)))
+    return best[1] if best else (_r32(math.sqrt(area * ratio)), _r32(math.sqrt(area / ratio)))
+
+
+def scale_canvas(fmt: str, method: str) -> tuple[int, int]:
+    """La toile d'un préréglage dans un format (le 2,4:1 rend exactement la recette de Cal)."""
+    ratio = dict((f, r) for f, _, r in FORMATS).get(fmt, 2.4)
+    if method == "brouillon":
+        w, h = fit32(ratio, TIER_AREA["esquisse"])
+        return 2 * w, 2 * h
+    return fit32(ratio, TIER_AREA.get(method, TIER_AREA["esquisse"]))
+
+
+def scale(frames: int = 124, steps: int | None = None, samples: list | None = None, ref_frames: int = 0,
+          stages_i2v: bool = False) -> dict:
+    """L'échelle que la page montre : pour chaque format, la toile de chaque préréglage et son temps estimé."""
+    out = []
+    for fid, lab, ratio in FORMATS:
+        sizes = {}
+        for m, M in METHODS.items():
+            w, h = scale_canvas(fid, m)
+            st = 1 if stages_i2v else M["stages"]
+            sizes[m] = {"w": w, "h": h, "mpx": round(w * h / 1e6, 2), "stages": st,
+                        "draft": list(draft_canvas(w, h)) if st == 2 else None,
+                        "estimate": estimate(m, w, h, frames, steps or default_steps(m), samples=samples,
+                                             ref_frames=ref_frames, stages=st)}
+        out.append({"id": fid, "label": lab, "ratio": round(ratio, 4), "sizes": sizes})
+    return {"formats": out, "default_format": DEFAULT_FORMAT, "tiers": list(METHODS),
+            "source": "aires de la recette de Cal (2,4:1) reportées à chaque format, multiples de 32 (le nœud H3)"}
+
+
 # ── le temps estimé ─────────────────────────────────────────
 # La forme : un ajustement sur cinq rendus mesurés sur DGX1 (R0 1792×768 124 img
 # 4 pas 300 s ; R3 2240×960 4 pas 510 s ; R5 2240×960 8 pas 691 s ; banc i2v
@@ -277,9 +350,12 @@ def _units(method: str, w: int, h: int, frames: int, steps: int, stages: int | N
 
 
 def _cal_rate(method: str) -> float:
-    m = METHODS[method]
+    """Secondes par unité : le rendu de Cal de ce préréglage (l'Esquisse et le Léger, jamais mesurés à part,
+    prennent celle du Brouillon : même modèle, mêmes pas — `rate_from`)."""
+    src = METHODS[method].get("rate_from", method)
+    m = METHODS[src]
     w, h = m["canvas"]
-    return m["cal"]["seconds"] / _units(method, w, h, m["cal"]["frames"], m["default_steps"])
+    return m["cal"]["seconds"] / _units(src, w, h, m["cal"]["frames"], m["default_steps"])
 
 
 def estimate(method: str, w: int, h: int, frames: int, steps: int, *, ref_max: bool = False,
@@ -427,7 +503,33 @@ def object_parts(imgs: list) -> list:
 
 
 def token_key(kind: str, num: str) -> str:
-    return f"{kind.lower()}{num}"
+    return mentions.key(kind, num)
+
+
+# Les 9 images d'H3 (le nœud : ref_images, max 9) se partagent entre les éléments. Un personnage complet en envoie 5
+# (planche ou « .char »), un objet 4 : deux personnages n'y tiennent pas (10 images, refusé jusqu'au 09/10). Par
+# construction, chacun garde d'abord ce qui fait son identité, puis le détail ; on retire à celui qui en a le plus
+# (le dernier à égalité) son image la moins utile, jusqu'à ce que tout tienne — jamais sa dernière. Le rang :
+# la planche, le visage de face, le plein pied, le haut de la tenue, le 3/4, le bas de la tenue, les vues d'un objet,
+# le profil, le dos, le 3/4 sourire (une expression : le moins sûr pour l'identité). Aucun guide ne documente ce
+# partage : c'est une décision du portail (docs/etudes/movie.md, l'audit du 09/10), à juger au rendu.
+KEEP_RANK = {"sheet": 0, "object_sheet": 0, "face_front": 1, "face": 1, "full body": 2, "outfit_top": 3, "face_34": 4,
+             "outfit_bottom": 5, "object_view": 6, "face_profile": 7, "back": 8, "face_34_smile": 9, "expression": 9}
+
+
+def fit_budget(groups: list[list], budget: int) -> list[list]:
+    """`groups` : les images de chaque élément, dans leur ordre d'envoi ; rend ce qui reste quand il n'y a que
+    `budget` places, et ce qui est laissé de côté (`dropped`, par groupe). L'ordre d'envoi ne change pas."""
+    keep = [list(g) for g in groups]
+    dropped: list[list] = [[] for _ in groups]
+    rank = lambda r: KEEP_RANK.get(r.get("_kind") or r.get("role") or "", 10)  # noqa: E731
+    while sum(len(g) for g in keep) > max(budget, len(keep)):
+        k = max(range(len(keep)), key=lambda i: (len(keep[i]), i))
+        if len(keep[k]) <= 1:
+            break
+        j = max(range(len(keep[k])), key=lambda i: (rank(keep[k][i]), i))
+        dropped[k].append(keep[k].pop(j))
+    return [keep, dropped]
 
 
 def _inputs(inputs: dict, errors: list, method: str = DEFAULT_METHOD, notes: list | None = None) -> dict:
@@ -466,6 +568,7 @@ def _inputs(inputs: dict, errors: list, method: str = DEFAULT_METHOD, notes: lis
                          "pics": [len(pictures)], "nums": {}, "item": it["id"]})
         tags[f"image{pos + 1}"] = f"<Subject {len(subjects)}>"
     element_voices = []
+    chosen = []   # (place, objet, version, images, voix) : les images se partagent les places restantes (fit_budget)
     for pos, p in enumerate(slots["element"]):
         got = entry("element", pos, p, ("element",))
         if not got:
@@ -478,7 +581,6 @@ def _inputs(inputs: dict, errors: list, method: str = DEFAULT_METHOD, notes: lis
         if not src:
             errors.append(f"@element{pos + 1} « {it['title']} » n'a pas encore de version publiée")
             continue
-        el = it["element"]
         if src["kind"] == "image":   # une version qui est une image
             imgs, voices, why = [{"file": src["file"], "role": "", "label": src.get("title") or ""}], [], ""
         else:
@@ -488,6 +590,16 @@ def _inputs(inputs: dict, errors: list, method: str = DEFAULT_METHOD, notes: lis
             continue
         if why and notes is not None:
             notes.append(f"@element{pos + 1} « {it['title']} » : {why}")
+        chosen.append((pos, it, src, imgs, voices))
+    kept, dropped = fit_budget([c[3] for c in chosen], LIMITS["image"] - len(pictures))
+    for (pos, it, src, _, voices), imgs, gone in zip(chosen, kept, dropped):
+        el = it["element"]
+        if gone and notes is not None:
+            labs = [r.get("label") or KIND_FR.get(r.get("_kind"), "") or ROLE_FR.get(r.get("role"), r.get("role") or "réf.")
+                    for r in gone]
+            notes.append(f"@element{pos + 1} « {it['title']} » : {len(imgs)} image{'s' if len(imgs) > 1 else ''} sur "
+                         f"{len(imgs) + len(gone)} — H3 prend 9 images en tout ; laissée{'s' if len(gone) > 1 else ''} de côté : "
+                         + ", ".join(labs))
         pub_refs = {r["file"]: r for r in (library.public(src).get("element") or {}).get("refs", [])}
         nums = {}
         for r in imgs:
@@ -559,15 +671,8 @@ def _inputs(inputs: dict, errors: list, method: str = DEFAULT_METHOD, notes: lis
 
 def check_tokens(texts: list[str], tags: dict) -> tuple[list, set]:
     """Les jetons des champs : ceux qui ne pointent vers rien (rouges), et
-    ceux qui servent."""
-    bad, seen = [], set()
-    for t in texts:
-        for m in TOKEN_RX.finditer(t or ""):
-            k = token_key(m.group(1), m.group(2))
-            seen.add(k)
-            if k not in tags and m.group(0) not in bad:
-                bad.append(m.group(0))
-    return bad, seen
+    ceux qui servent — l'analyseur commun (core/mentions.py)."""
+    return mentions.check(texts, tags)
 
 
 # ── les répliques : au format H3, jamais « entre guillemets » ─────────────────────────────────────────────────────
@@ -606,7 +711,7 @@ def speech_to_h3(desc: str, lang: str = "fr") -> tuple[str, int]:
 
 
 def swap_tokens(text: str, tags: dict) -> str:
-    return TOKEN_RX.sub(lambda m: tags.get(token_key(m.group(1), m.group(2)), m.group(0)), text or "")
+    return mentions.swap(text, tags)
 
 
 def _tags(nums: list[int], word: str = "Picture") -> str:
@@ -627,18 +732,72 @@ def _sound(sound: str, music: str) -> tuple[str, str]:
     return sound, music
 
 
-def _shots(body: str) -> str:
-    """Les plans que la description découpe (« [Shot 1], [Shot 2]… »), pour
-    `appears in` de la rétention — comme Cal les liste ; « [Shot 1] » sinon."""
-    got = list(dict.fromkeys(re.findall(r"\[Shot \d+\]", body)))
-    return ", ".join(got) if got else "[Shot 1]"
+# ── les plans : « [Shot n] », puis le temps de coupe des suivants ──
+# Le guide (MiniMax-AI/MiniMax-H3, skills/h3-prompt-writing/references/base-en.txt § 4.2) : « Do not add a timestamp
+# to the first shot. Use sequential shot numbers for later shots, and begin each one with a strictly increasing cut
+# time that falls within the video duration: [Shot 2] At 00:03.500, the camera cuts to… »
+SHOT_RX = re.compile(r"\[Shot (\d+)\](?:\s*At (\d{1,2}):(\d{1,2}(?:\.\d{1,3})?)\s*,?)?")
+
+
+def cut_time(seconds: float) -> str:
+    """00:04.500 : le temps de coupe d'un plan, comme le guide l'écrit."""
+    ms = round(max(0.0, seconds) * 1000)
+    return f"{ms // 60000:02d}:{(ms % 60000) // 1000:02d}.{ms % 1000:03d}"
+
+
+def shot_marks(text: str) -> list[dict]:
+    """Les plans d'une description : {n, at (secondes, ou None), start, end}."""
+    return [{"n": int(m.group(1)), "at": (int(m.group(2)) * 60 + float(m.group(3))) if m.group(2) else None,
+             "start": m.start(), "end": m.end()} for m in SHOT_RX.finditer(text or "")]
+
+
+def check_shots(text: str, seconds: float) -> tuple[list[str], list[str]]:
+    """(erreurs, remarques) des plans d'une description, contre le guide et la durée du rendu. Un temps de coupe
+    hors du plan est une erreur (« timing that does not match the requested duration », SKILL.md) ; un plan
+    suivant sans temps, une remarque."""
+    errors, notes = [], []
+    marks = shot_marks(text)
+    if not marks:
+        return errors, notes
+    if [m["n"] for m in marks] != list(range(1, len(marks) + 1)):
+        notes.append("les plans se numérotent dans l'ordre : [Shot 1], [Shot 2]… (" + ", ".join(f"[Shot {m['n']}]" for m in marks) + ")")
+    if marks[0]["at"] is not None:
+        notes.append("le premier plan ne porte pas de temps (le guide H3 : « Do not add a timestamp to the first shot »)")
+    prev = 0.0
+    for m in marks[1:]:
+        if m["at"] is None:
+            notes.append(f"[Shot {m['n']}] sans temps de coupe : le guide H3 fait commencer chaque plan suivant par le sien, "
+                         f"« [Shot {m['n']}] At 00:03.500, the camera cuts to… »")
+            continue
+        if m["at"] <= prev:
+            errors.append(f"[Shot {m['n']}] coupe à {cut_time(m['at'])} : les temps de coupe vont croissant (après {cut_time(prev)})")
+        elif m["at"] >= seconds:
+            errors.append(f"[Shot {m['n']}] coupe à {cut_time(m['at'])}, après la fin du plan ({seconds:.2f} s) : "
+                          "allonge la durée ou avance la coupe")
+        prev = max(prev, m["at"])
+    return errors, notes
+
+
+def _shots(body: str, tag: str | None = None) -> str:
+    """Les plans d'un sujet pour `appears in` de la rétention (le guide : « <Subject 1> (appears in [Shot 1],
+    [Shot 3]) ») : ceux où son étiquette est écrite ; tous les plans si elle n'y est pas (défini, envoyé quand
+    même) ; « [Shot 1] » sans découpage."""
+    marks = shot_marks(body)
+    if not marks:
+        return "[Shot 1]"
+    ends = [m["start"] for m in marks[1:]] + [len(body)]
+    got = [f"[Shot {m['n']}]" for m, e in zip(marks, ends) if tag and tag in body[m["start"]:e]]
+    return ", ".join(dict.fromkeys(got or [f"[Shot {m['n']}]" for m in marks]))
 
 
 def _story(body: str) -> str:
-    """La phrase du résumé : la première du premier plan (une ligne de look
-    placée avant [Shot 1] n'est pas l'histoire)."""
-    m = re.search(r"\[Shot \d+\]\s*(.*)", body, re.S)
-    return _first_sentence(m.group(1) if m else body)
+    """La phrase du résumé : la première du premier plan (une ligne de look placée avant [Shot 1] n'est pas
+    l'histoire), sans ses répliques ni les identifiants de voix — ils vont dans detailed_description."""
+    marks = shot_marks(body)
+    one = body[marks[0]["end"]:(marks[1]["start"] if len(marks) > 1 else len(body))] if marks else body
+    one = re.sub(r"<d>.*?</d>", " ", one, flags=re.S)
+    one = re.sub(r"\(S\d+(?:,S\d+)*\)\s*\w*:?", " ", one)
+    return _first_sentence(one)
 
 
 def _shot(desc: str) -> str:
@@ -647,45 +806,64 @@ def _shot(desc: str) -> str:
     return desc if "[Shot" in desc else "[Shot 1] " + desc
 
 
+def speaker_of(body: str, tag: str) -> str:
+    """L'identifiant de voix d'un sujet dans la description compilée (« <Subject 2> (S1) ») : « (S1) », sinon ''.
+    Le guide ref-en § 2.4 : une voix de référence liée à un sujet reprend son (Sx), jamais un nouveau."""
+    m = re.search(re.escape(tag) + r"\s*\((S\d+)\)", body)
+    return f" ({m.group(1)})" if m else ""
+
+
 def compose_base(desc: str, sound: str, music: str, *, first: bool, last: bool, seconds: float) -> str:
-    """Texte et Images : les trois champs du guide de base
-    (VIDEO_PROMPT_WRITING_GUIDE_base_en.md), et la ligne d'ancrage des
-    images au-dessus, générée ici parce qu'elle porte la durée."""
-    head = []
-    if first:
-        head.append("For the target video, at 0.00 seconds into the target video, <Picture 1> (from [Shot 1]) is fully referenced.")
-    if last:
-        n = 2 if first else 1
-        head.append(f"<Picture {n}> (from [Shot 1]) aligns with the {seconds:.2f}-second mark of the target video.")
-    body = desc
-    if (first or last) and "<Picture" not in desc:
-        # le guide : se référer aux images par leur étiquette dans la description
-        body = ("Begin with <Picture 1> and end with <Picture 2>. " if first and last else
-                "Begin with <Picture 1>. " if first else "End with <Picture 1>. ") + desc
+    """Texte et Images : les trois champs du guide de base (skills/h3-prompt-writing/references/base-en.txt,
+    MiniMax-AI/MiniMax-H3), et la première ligne d'ancrage des images, mot pour mot celle du guide (§ 2.1) :
+    I2VA « For the target video, at 0.00 seconds… », FL2VA et L2VA « How the reference pictures align with the
+    target video — … » avec le dernier plan réel et la durée à deux décimales. Les images sont désignées dans la
+    description par `@image1` (la première envoyée), `@image2` (la seconde) : compilées en `<Picture n>` par plan()."""
+    body = _shot(desc)
+    marks = shot_marks(body)
+    last_shot = marks[-1]["n"] if marks else 1
+    head = ""
+    if first and last:
+        head = ("How the reference pictures align with the target video — Picture 1 (from Shot 1) aligns with the "
+                f"0.00-second mark of the target video; Picture 2 (from Shot {last_shot}) aligns with the {seconds:.2f}-second "
+                "mark of the target video.")
+    elif first:
+        head = "For the target video, at 0.00 seconds into the target video, <Picture 1> (from [Shot 1]) is fully referenced."
+    elif last:
+        head = (f"How the reference pictures align with the target video — <Picture 1> (from [Shot {last_shot}]) aligns with "
+                f"the {seconds:.2f}-second mark of the target video.")
+    if (first or last) and "<Picture" not in body and "Picture 1" not in body:
+        # se référer aux images dans la description : les tournures du guide ref-en § 5.3 (« the shot begins from
+        # <Picture 1> », « the shot ends on <Picture 3> »), au début du premier plan
+        lead = ("The shot begins from <Picture 1> and ends on <Picture 2>. " if first and last else
+                "The shot begins from <Picture 1>. " if first else "The shot ends on <Picture 1>. ")
+        body = re.sub(r"\[Shot 1\]\s*", lambda m: "[Shot 1] " + lead, body, count=1)
     snd, mus = _sound(sound, music)
-    text = f"integrated_multimodal_description:\n{_tagged(_shot(body))}\n\noverall_soundscape:\n{snd}\n\nnon_diegetic_music:\n{mus}"
-    return ("\n".join(head) + "\n\n" + text) if head else text
+    text = f"integrated_multimodal_description: {_tagged(body)}\n\noverall_soundscape: {snd}\n\nnon_diegetic_music: {mus}"
+    return (head + "\n\n" + text) if head else text
 
 
-def compose_ref(desc: str, sound: str, music: str, R: dict) -> str:
-    """Références : les six sections du guide ref (VIDEO_PROMPT_WRITING_GUIDE_ref_en.md).
-    Chaque sujet est défini (un élément : son nom, sa description, d'où
-    viennent son visage et son corps — la forme de Character Factory) ; la
-    rétention suit le rôle : un look passe en attribute_transfer (H3 Studio),
-    un lieu garde son monde mais pas son cadrage (la planète de
-    test-r2v-h3.py), le reste est fully_preserved (le guide). Les jetons
-    (@image1, @element1…) deviennent les étiquettes."""
-    defs, keep, notes = [], [], []
-    shots = _shots(_shot(desc))
+def compose_ref(desc: str, sound: str, music: str, R: dict, summary: str = "") -> str:
+    """Références : les six sections du guide ref (skills/h3-prompt-writing/references/ref-en.txt).
+    Chaque sujet est défini (un élément : son nom, sa description en anglais, d'où viennent son visage et son
+    corps — la forme de Character Factory) ; une vidéo, un son ont leur ligne aussi (§ 2.3, 2.4 : une voix liée à
+    un sujet reprend son (Sx)). La rétention suit le rôle : un look passe en attribute_transfer (H3 Studio), un lieu
+    garde son monde mais pas son cadrage (la planète de test-r2v-h3.py), le reste est fully_preserved (le guide) ;
+    chaque sujet « appears in » les plans où il est écrit. Les jetons (@image1, @element1…) deviennent les
+    étiquettes ; `summary` (une phrase anglaise de la mise en forme) remplace la phrase tirée du premier plan."""
+    defs, keep = [], []
+    body = swap_tokens(_shot(desc), R["tags"])
     for k, s in enumerate(R["subjects"], start=1):
         subj = f"<Subject {k}>"
+        shots = _shots(body, subj)
+        own = (s.get("description") or "").strip().rstrip(".")
         if s["kind"] == "element":
             nums = s["nums"]
             src = []
 
             def tg(keys):
                 return [n for k in keys for n in nums.get(k, [])]
-            faces = tg(("face", "face_front", "face_34_smile", "face_34", "face_profile"))
+            faces = tg(("face", "face_front", "face_34_smile", "face_34", "face_profile", "expression"))
             sheet, outfit, back = tg(("sheet",)), tg(("outfit_top", "outfit_bottom")), tg(("back",))
             # la forme des définitions de Cal (test-meteorite*.py) : d'où vient chaque partie du personnage
             if sheet:
@@ -705,13 +883,14 @@ def compose_ref(desc: str, sound: str, music: str, R: dict) -> str:
                            "(front, side and back views on a white studio background)")
             if nums.get("object_view"):
                 src.append(f"seen from several angles in {_tags(nums['object_view'])}")
-            known = {"face", "face_front", "face_34_smile", "face_34", "face_profile", "sheet", "outfit_top",
+            known = {"face", "face_front", "face_34_smile", "face_34", "face_profile", "expression", "sheet", "outfit_top",
                      "outfit_bottom", "back", "full body", "object_sheet", "object_view"}
             others = [n for r, v in nums.items() if r not in known for n in v]
             if others:
                 src.append(f"shown in {_tags(others)}")
-            d = s["description"].rstrip(".")
-            defs.append(f"{subj} is {s['title']}" + (f", {d}" if d else "") + (", " + ", and ".join(src) if src else "") + ".")
+            defs.append(f"{subj} is {s['title']}" + (f", {own}" if own else "") + (", " + ", and ".join(src) if src else "") + ".")
+        elif own:   # une image décrite (la mise en forme) : « <Subject 1> is the young woman in <Picture 1>, … » (§ 2.1)
+            defs.append(f"{subj} is {own}, shown in {_tags(s['pics'])}.")
         elif s["role"] == "auto":   # le prompt dit ce que c'est
             defs.append(f"{subj} is what {_tags(s['pics'])} shows. Keep its visible defining details.")
         else:
@@ -736,25 +915,34 @@ def compose_ref(desc: str, sound: str, music: str, R: dict) -> str:
             keep.append(f"{subj} (appears in {shots}): fully_preserved - the defining visual attributes shown in {pics} are retained.")
     for n, v in enumerate(R["videos"], start=1):
         tag = f"<Video {n}>"
-        if v.get("audio_tag"):
-            notes.append(f"{v['audio_tag']} is the soundtrack paired with {tag}.")
         if v["role"] == "scene":
-            notes.append(f"{tag} is a whole-scene reference. Follow its visible setting, subjects, action, camera movement, "
-                         "composition and timing as closely as possible; apply only the change explicitly requested in "
-                         "[Shot 1]. Generate a new video rather than treating reference frames as locked pixels.")
+            defs.append(f"{tag} is a whole-scene reference: its setting, subjects, action, camera movement, composition and "
+                        "timing are followed, with only the change explicitly requested in the description.")
+            keep.append(f"{tag} (whole scene): partially_preserved - follow its setting, action, camera movement and timing as "
+                        "closely as possible; generate a new video rather than treating its frames as locked pixels.")
         else:
-            notes.append(f"{tag} is a {ROLE_EN[v['role']]} reference.")
+            defs.append(f"{tag} is the {ROLE_EN[v['role']]} reference for the target video.")
+            keep.append(f"{tag} ({ROLE_EN[v['role']]}): partially_preserved - only its {ROLE_EN[v['role']]} is followed; "
+                        "its people, places and look are not reproduced.")
+        if v.get("audio_tag"):   # § 2.5 : la bande-son d'une vidéo a son propre <Audio j>
+            defs.append(f"{v['audio_tag']} is the synchronized audio track of {tag}.")
+            keep.append(f"{v['audio_tag']}: reference - its sound texture and rhythm are referenced, not copied.")
     for a in R["audios"]:
-        if a.get("subject"):   # la voix d'un élément
-            notes.append(f"{a['tag']} is the voice reference of <Subject {a['subject']}>: timbre, tone and delivery only, never its words.")
+        if a.get("subject"):   # la voix d'un élément : « <Audio 1> is the voice-timbre reference for <Subject 1> (S1). »
+            who = f"<Subject {a['subject']}>"
+            defs.append(f"{a['tag']} is the voice-timbre reference for {who}{speaker_of(body, who)}.")
+            keep.append(f"{a['tag']}: reference - {who} speaks with its voice timbre and delivery, never its words, without "
+                        "copying the original signal.")
         else:
-            notes.append(f"{a['tag']} is a {ROLE_EN[a['role']]} reference.")
-    body = swap_tokens(desc, R["tags"])
+            defs.append(f"{a['tag']} is a {ROLE_EN[a['role']]} reference.")
+            keep.append(f"{a['tag']}: reference - its {ROLE_EN[a['role']]} is referenced, not copied.")
+    kinds = ["reference generation"] + (["audio reference"] if R["audios"] or any(v.get("audio_tag") for v in R["videos"]) else [])
     snd, mus = _sound(swap_tokens(sound, R["tags"]), swap_tokens(music, R["tags"]))
+    story = " ".join(swap_tokens(summary, R["tags"]).split()) if summary else _story(body)
     return ("subject_definitions:\n" + ("\n".join(defs) or "No separate still-image subject is defined.")
-            + "\n\nsummary:\n[reference generation] " + _story(body) + ((" " + " ".join(notes)) if notes else "")
+            + f"\n\nsummary:\n[{' + '.join(kinds)}] " + story
             + "\n\nretention_analysis:\n" + ("\n".join(keep) or "Preserve the motion and sound qualities of the cited references.")
-            + "\n\ndetailed_description:\n" + _tagged(_shot(body))
+            + "\n\ndetailed_description:\n" + _tagged(body)
             + f"\n\noverall_soundscape:\n{snd}\n\nnon_diegetic_music:\n{mus}")
 
 
@@ -806,38 +994,58 @@ def plan(mode: str, p: dict, *, with_graph: bool = False) -> dict:
         anchor = start or end
         if anchor and anchor.get("width") and anchor.get("height"):
             auto = adapt_canvas(anchor["width"], anchor["height"])
+        # la même grammaire qu'en Références : @image1 est la première image envoyée, @image2 la seconde —
+        # le guide base-en les appelle <Picture 1>, <Picture 2> (la première, sinon la dernière seule)
+        R["tags"] = {mentions.key("image", n): f"<Picture {n}>" for n in range(1, len(pictures) + 1)}
     if mode == "r2v":
         R = _inputs(p.get("inputs") if isinstance(p.get("inputs"), dict) else {}, errors, method, notes)
         pictures, parents = R["pictures"], R["parents"]
         if not R["tags"]:
             errors.append("ajoutez une entrée : une image, un élément (un personnage), une vidéo ou un son")
+        # la définition d'un sujet en anglais, écrite par la mise en forme (movie_invite.py) ou par la personne :
+        # {"@element1": "a lean man in his thirties…"} — sinon la description de l'élément, telle quelle
+        own = {mentions.key(*re.match(r"@?([^\W\d]+)(\d*)$", str(k)).groups()): " ".join(str(v).split())
+               for k, v in (p.get("subjects") or {}).items()
+               if isinstance(p.get("subjects"), dict) and re.match(r"@?([^\W\d]+)(\d*)$", str(k)) and str(v).strip()}
+        for sj in R["subjects"]:
+            if own.get(sj["token"]):
+                sj["description"], sj["described"] = own[sj["token"]], "mise en forme"
+            elif sj.get("description"):
+                sj["described"] = "élément"
+                if mentions.langue(sj["description"]) == "fr":
+                    notes.append(f"@{sj['token']} « {sj['title']} » : sa description est en français et part telle quelle dans "
+                                 "subject_definitions — H3 la veut en anglais (« Mettre en forme » l'écrit)")
     # les jetons des trois champs : rouges s'ils ne pointent vers rien (commun/entrees.js en direct)
     bad, seen = check_tokens([desc, sound, music], R["tags"])
     if bad:
         errors.append(("ces jetons ne pointent vers rien : " + ", ".join(bad) + " — remplissez leur place dans les entrées, "
                        "ou retirez-les") if mode == "r2v" else
-                      ("les jetons " + ", ".join(bad) + " ne servent qu'en mode Références"))
+                      ("ces jetons ne pointent vers rien : " + ", ".join(bad) + " — en mode Images, @image1 est la première "
+                       "image envoyée et @image2 la seconde") if mode == "i2v" else
+                      ("les jetons " + ", ".join(bad) + " ne servent qu'en modes Images et Références"))
     if mode == "r2v":
         idle = [f"@{k}" for k in R["tags"] if k not in seen]
         if idle and desc:
             notes.append(f"{', '.join(idle)} {'ne sont' if len(idle) > 1 else 'n’est'} pas dans le prompt : H3 "
                          f"{'les' if len(idle) > 1 else 'la'} reçoit quand même, définie{'s' if len(idle) > 1 else ''} dans subject_definitions")
-    # la toile : celle du préréglage, sauf si « Paramètres avancés » en pose une
+    # la toile : celle du préréglage dans le format choisi (l'échelle, scale_canvas), sauf si « Paramètres
+    # avancés » en pose une ; sans format, le 2,4:1 de la recette de Cal
     canvas = p.get("canvas")
-    preset_wh = METHODS[method]["canvas"]
+    fmt = p.get("format") if p.get("format") in [f for f, _, _ in FORMATS] else DEFAULT_FORMAT
+    preset_wh = scale_canvas(fmt, method)
     if canvas == "auto" and auto:
         width, height = auto
         fam = "image"
     elif canvas in (None, "", "auto", "preset"):
         width, height = preset_wh
-        fam = "2,4:1"
+        fam = "2,4:1" if fmt == DEFAULT_FORMAT else fmt
     else:
         try:
             width, height = int(canvas[0]), int(canvas[1])
             fam = next((c[2] for c in CANVASES if (c[0], c[1]) == (width, height)), "libre")
         except (TypeError, ValueError, IndexError, KeyError):
             width, height = preset_wh
-            fam = "2,4:1"
+            fam = "2,4:1" if fmt == DEFAULT_FORMAT else fmt
         if width % 32 or height % 32 or min(width, height) < 256 or width * height > 2688 * 1152:
             errors.append("toile : des multiples de 32, 256 au moins, 2688 × 1152 au plus (liste du banc H3)")
     stages = METHODS[method]["stages"]
@@ -899,9 +1107,18 @@ def plan(mode: str, p: dict, *, with_graph: bool = False) -> dict:
         sent = swap_tokens(desc, R["tags"])
         notes.append("prompt déjà au format H3 (sections) : envoyé tel quel, jetons remplacés")
     elif mode == "r2v":
-        sent = compose_ref(desc, sound, music, R) if (R["subjects"] or R["videos"] or R["audios"]) else ""
+        sent = compose_ref(desc, sound, music, R, summary=str(p.get("summary") or "")) \
+            if (R["subjects"] or R["videos"] or R["audios"]) else ""
     else:
-        sent = compose_base(desc, sound, music, first=bool(start), last=bool(end), seconds=seconds)
+        sent = compose_base(swap_tokens(desc, R["tags"]), swap_tokens(sound, R["tags"]), swap_tokens(music, R["tags"]),
+                            first=bool(start), last=bool(end), seconds=seconds)
+    # les plans et leurs temps de coupe, contre la durée (le guide base-en § 4.2)
+    e2, n2 = check_shots(desc, seconds)
+    errors += e2
+    notes += n2
+    if desc and mentions.langue(desc) == "fr":
+        notes.append("la description est en français : les guides H3 demandent l'anglais pour tout, sauf les répliques dans "
+                     "<d>[French] …</d> et le texte visible à l'écran — « Mettre en forme » l'écrit en anglais au format officiel")
     if triggers:
         # comme dans ses légendes d'entraînement (ai-toolkit met le mot en tête de chacune), après le tag
         # de la recette ; un prompt écrit en sections part tel quel : à la personne de l'y mettre
@@ -931,7 +1148,7 @@ def plan(mode: str, p: dict, *, with_graph: bool = False) -> dict:
                         "estimate": estimate(method, auto[0], auto[1], frames, steps, samples=samples, ref_frames=ref_frames,
                                              stages=stages)})
     # chaque préréglage à sa toile, pour les deux boutons de la page (le temps de chacun)
-    presets = {k: estimate(k, *m["canvas"], frames, default_steps(k), samples=samples, ref_frames=ref_frames,
+    presets = {k: estimate(k, *scale_canvas(fmt, k), frames, default_steps(k), samples=samples, ref_frames=ref_frames,
                            stages=1 if mode == "i2v" else m["stages"])
                for k, m in METHODS.items()}
     out = {
@@ -944,10 +1161,14 @@ def plan(mode: str, p: dict, *, with_graph: bool = False) -> dict:
         "recipe_loras": [{"name": PEOPLE, "strength": 0.6}, {"name": CINE, "strength": 0.6}, {"name": TURBO_V4, "strength": 1.0}],
         "loras": loras, "ref_image_size": ref_size, "crf": crf,
         "estimate": est, "presets": presets, "canvases": rows, "weights": weights,
+        "scale": scale(frames, None, samples, ref_frames, stages_i2v=(mode == "i2v")),
         "pictures": [{k: v for k, v in x.items() if k != "path"} | {"tag": f"<Picture {n}>"}
                      for n, x in enumerate(pictures, start=1)],
         "subjects": [{"tag": f"<Subject {k}>", "token": "@" + s["token"], "title": s["title"], "role": s["role"],
-                      "pictures": [f"<Picture {n}>" for n in s["pics"]]} for k, s in enumerate(R["subjects"], start=1)],
+                      "pictures": [f"<Picture {n}>" for n in s["pics"]], "description": s.get("description") or "",
+                      "described": s.get("described") or ""} for k, s in enumerate(R["subjects"], start=1)],
+        "format": fmt, "language": mentions.langue(desc) if desc else "?",
+        "shots": [{"n": m["n"], "at": m["at"]} for m in shot_marks(desc)],
         "videos": [{"tag": f"<Video {n}>", "token": "@" + v["token"], "role": v["role"], "sound": v["sound"],
                     "audio_tag": v.get("audio_tag")} for n, v in enumerate(R["videos"], start=1)],
         "audios": [{"tag": a["tag"], "token": "@" + a["token"] if a["token"] else None, "role": a["role"]} for a in R["audios"]],
@@ -1299,7 +1520,7 @@ def _prep_start(ctx, pic: dict, width: int, height: int, name: str = "premiere.p
 
 # ce que la page envoie pour un plan (movie.js, params()) : de quoi le refaire tel quel
 REQUEST_KEYS = ("desc", "sound", "music", "method", "frames", "steps", "seed", "canvas", "loras", "adv",
-                "start", "end", "inputs", "ref_image_size")
+                "start", "end", "inputs", "ref_image_size", "format", "subjects", "speech_lang")
 
 
 def request_of(rec: dict) -> dict:
@@ -1327,6 +1548,12 @@ def _recipe(pl: dict, eng: str) -> dict:
     r["prompt_sent"] = pl["prompt_sent"]
     r["pictures"] = [{"tag": x["tag"], "item": x["item"], "label": x["label"], "role": x["role"]} for x in pl["pictures"]]
     r["mentions"] = pl["mentions"]
+    # ce que le diagnostic « Vidéo · ce que H3 a reçu » relit (tools/diag_rendus.py) : les sujets et leur définition,
+    # les vidéos et les sons, ce que le plan a dit avant le rendu
+    r["subjects"] = pl["subjects"]
+    r["videos"], r["audios"] = pl["videos"], pl["audios"]
+    r["notes"] = pl["notes"]
+    r["format"] = pl.get("format")
     return r
 
 
@@ -1812,6 +2039,9 @@ def r_options(req):
                      "canvas": list(m["canvas"]), "stages": m["stages"], "refs": m["refs"], "cal": m["cal"]}
                     for k, m in METHODS.items()],
         "default_method": DEFAULT_METHOD,
+        # l'échelle des toiles (Cal, 09/10) : pour chaque format, la toile et le temps de chaque préréglage (124 images,
+        # 8 pas) ; POST /api/movie/plan rend la même pour la durée choisie (`scale`), le paramètre `format` la choisit
+        "scale": scale(samples=_samples()),
         "recipe": {"loras": [{"name": PEOPLE, "strength": 0.6}, {"name": CINE, "strength": 0.6}, {"name": TURBO_V4, "strength": 1.0}],
                    "tag": QUALITY_TAG, "sampler": "MiniMaxH3TurboSampler", "scheduler": "simple", "shift": [12, 3],
                    "attention": "comfy kitchen attention + Sol-Attn (tau 1,3)",
@@ -1822,8 +2052,17 @@ def r_options(req):
         "limits": LIMITS, "camera": [{"id": a, "phrase": b} for a, b in CAMERA],
         "unets": UNETS,
         "min_free_gb": config.get("h3_min_free_gb", 45), "idle_minutes": config.get("h3_idle_minutes", 10),
-        "engine": engine(), "llm": False,
+        "engine": engine(), "llm": _writer_state(),
     }
+
+
+def _writer_state() -> dict:
+    """La mise en forme de l'invite (server/tools/movie_invite.py) : le modèle de texte répond-il ? Lu, gardé 30 s."""
+    try:
+        from tools import movie_invite
+        return movie_invite.writer_state()
+    except Exception as e:  # noqa: BLE001 — l'état ne casse jamais la page
+        return {"up": False, "why": f"{type(e).__name__}: {e}"}
 
 
 def r_plan(req):
@@ -1997,8 +2236,9 @@ def selftest(call, ok) -> None:
     st, opts = call("GET", "/api/movie/options")
     ok(st == 200 and [m["id"] for m in opts.get("modes", [])] == ["t2v", "i2v", "r2v"] and opts["fps"] == 24
        and opts["limits"]["image"] == 9 and len(opts["camera"]) == 20, f"les options ({st})")
-    ok([m["id"] for m in opts.get("methods", [])] == ["brouillon", "qualite"] and opts.get("default_method") == "brouillon"
-       and [x["name"] for x in opts["recipe"]["loras"]] == [PEOPLE, CINE, TURBO_V4], "deux préréglages, la pile de LoRA de Cal dans l'ordre")
+    ok([m["id"] for m in opts.get("methods", [])] == ["esquisse", "leger", "brouillon", "qualite"] and opts.get("default_method") == "brouillon"
+       and [x["name"] for x in opts["recipe"]["loras"]] == [PEOPLE, CINE, TURBO_V4],
+       "quatre préréglages (l'Esquisse et le Léger avant ceux de Cal), la pile de LoRA de Cal dans l'ordre")
 
     # Texte
     st, bad = call("POST", "/api/movie/plan", {"mode": "t2v", "params": {}})
@@ -2007,9 +2247,9 @@ def selftest(call, ok) -> None:
         "desc": "A lighthouse keeper climbs the stairs at dawn. The camera pushes in with small amplitude at slow speed.",
         "music": "Sparse piano, slow tempo.", "frames": 175, "seed": 5}})
     s = pt.get("prompt_sent", "")
-    ok(st == 200 and pt["ok"] and s.startswith("integrated_multimodal_description:\nr34l1sm. DY. [Shot 1] A lighthouse")
-       and "overall_soundscape:\nNatural diegetic" in s and "non_diegetic_music:\nSparse piano" in s,
-       "texte : les trois champs du guide, le tag de la recette en tête")
+    ok(st == 200 and pt["ok"] and s.startswith("integrated_multimodal_description: r34l1sm. DY. [Shot 1] A lighthouse")
+       and "\n\noverall_soundscape: Natural diegetic" in s and "\n\nnon_diegetic_music: Sparse piano" in s,
+       "texte : les trois champs du guide base-en (§ 2.2 : « field: … » sur la même ligne), le tag de la recette en tête")
     g = pt.get("graph") or {}
     ok(pt["method"] == "brouillon" and (pt["width"], pt["height"]) == (1536, 640) and pt["draft"] == [768, 320]
        and g["6"]["class_type"] == "MiniMaxH3ImageToVideo" and "audio_vae" not in g["6"]["inputs"]
@@ -2046,10 +2286,10 @@ def selftest(call, ok) -> None:
     sent = pl.get("prompt_sent", "")
     ok(st == 200 and pl["ok"] and (pl["width"], pl["height"]) == (768, 1120) and pl["steps"] == 8 and pl["method"] == "brouillon",
        f"images : toile d'après l'image (avancé), Brouillon 8 pas ({pl.get('width')}×{pl.get('height')} {pl.get('errors')})")
-    ok(sent.startswith("For the target video, at 0.00 seconds into the target video, <Picture 1>")
-       and "<Picture 2> (from [Shot 1]) aligns with the 5.17-second mark" in sent
-       and "[Shot 1] Begin with <Picture 1> and end with <Picture 2>. He walks" in sent,
-       "images : ancrage de la première et de la dernière image (guide officiel)")
+    ok(sent.startswith("How the reference pictures align with the target video — Picture 1 (from Shot 1) aligns with the "
+                       "0.00-second mark of the target video; Picture 2 (from Shot 1) aligns with the 5.17-second mark")
+       and "[Shot 1] The shot begins from <Picture 1> and ends on <Picture 2>. He walks" in sent,
+       f"images : l'ancrage FL2VA mot pour mot (guide base-en § 2.1) ({sent[:160]!r})")
     g = pl.get("graph") or {}
     ok(g.get("6", {}).get("inputs", {}).get("first_frame") == ["20", 0] and g["6"]["inputs"].get("last_frame") == ["21", 0]
        and (g["6"]["inputs"]["width"], g["6"]["inputs"]["height"]) == (768, 1120) and pl["stages"] == 1
@@ -2059,7 +2299,8 @@ def selftest(call, ok) -> None:
     st, pe = call("POST", "/api/movie/plan", {"mode": "i2v", "graph": True, "params": {"end": fid, "desc": "x y", "canvas": [1344, 768]}})
     ge = pe.get("graph") or {}
     ok(pe["ok"] and "first_frame" not in ge["6"]["inputs"] and ge["6"]["inputs"].get("last_frame") == ["20", 0]
-       and "<Picture 1> (from [Shot 1]) aligns with the 5.17-second mark" in pe["prompt_sent"], "images : la dernière seule")
+       and pe["prompt_sent"].startswith("How the reference pictures align with the target video — <Picture 1> (from [Shot 1]) "
+                                        "aligns with the 5.17-second mark"), "images : la dernière seule (L2VA)")
     st, p16 = call("POST", "/api/movie/plan", {"mode": "i2v", "params": {"start": sid, "desc": "x"}})
     ok((p16["width"], p16["height"]) == (1536, 640) and any("recadrée" in n for n in p16.get("notes", [])),
        "la toile du préréglage : le recadrage de la première image est annoncé")
@@ -2096,9 +2337,14 @@ def selftest(call, ok) -> None:
     ok(idle["ok"] and any("@image2" in n for n in idle["notes"]), "une entrée non citée est notée, pas refusée")
     st, many = call("POST", "/api/movie/plan", {"mode": "r2v", "params": {
         "inputs": {"element": [{"item": eid}] * 5}, "desc": " ".join(f"@element{k + 1}" for k in range(5))}})
-    ok(not many["ok"] and any("9 au plus" in e for e in many["errors"]), "cinq personnages (10 images) : refusé, 9 au plus")
+    ok(many["ok"] and len(many["pictures"]) == 9 and any("@element5" in n and "1 image sur 2" in n and "laissée de côté" in n
+                                                          for n in many["notes"]),
+       f"cinq personnages (10 images) : les 9 places se partagent, le dernier garde son visage, et c'est dit ({many['errors']})")
+    st, ten = call("POST", "/api/movie/plan", {"mode": "r2v", "params": {
+        "inputs": {"element": [{"item": eid}] * 10}, "desc": " ".join(f"@element{k + 1}" for k in range(10))}})
+    ok(not ten["ok"] and any("9 au plus" in e for e in ten["errors"]), "dix personnages : refusé, 9 images au plus")
     st, t2 = call("POST", "/api/movie/plan", {"mode": "t2v", "params": {"desc": "@image1 at dawn."}})
-    ok(not t2["ok"] and any("mode Références" in e for e in t2["errors"]), "un jeton en mode Texte est dit")
+    ok(not t2["ok"] and any("modes Images et Références" in e for e in t2["errors"]), "un jeton en mode Texte est dit")
     # une vidéo de référence de 3 s (ffmpeg), son compris ; un élément qui porte une voix
     import tempfile
     tdir = Path(tempfile.mkdtemp())
@@ -2113,13 +2359,14 @@ def selftest(call, ok) -> None:
     gv = build_graph("r2v", pv, ["f.png", "b.png", "i.png"], "p", videos=["v.mp4"], audios=[]) if pv["ok"] else {}
     ok(pv["ok"] and gv["6"]["inputs"].get("ref_videos.ref_video_0") == ["301", 0] and gv["300"]["class_type"] == "LoadVideo"
        and gv["6"]["inputs"].get("ref_video_audios.ref_video_audio_0") == ["301", 1]
-       and "<Video 1> is a motion reference." in pv["prompt_sent"] and "<Audio 1> is the soundtrack paired with <Video 1>." in pv["prompt_sent"],
+       and "<Video 1> is the motion reference for the target video." in pv["prompt_sent"]
+       and "<Audio 1> is the synchronized audio track of <Video 1>." in pv["prompt_sent"],
        f"références : une vidéo et sa bande-son passent par LoadVideo → GetVideoComponents ({pv['errors']})")
     ev = library.create_element("Voix", "character", "", [{"path": library.path_of(library.get(fid)), "role": "face"},
                                                            {"path": tdir / "voix.wav", "role": "voice"}])
     pw = plan("r2v", {"inputs": {"element": [{"item": ev["id"]}], "audio": []}, "desc": "@element1 speaks."})
     ok(pw["ok"] and len(pw["pictures"]) == 1 and pw["audios"] and pw["audios"][0]["tag"] == "<Audio 1>"
-       and "<Audio 1> is the voice reference of <Subject 1>" in pw["prompt_sent"],
+       and "<Audio 1> is the voice-timbre reference for <Subject 1>." in pw["prompt_sent"],
        f"un élément qui porte une voix l'envoie en <Audio> ({pw.get('errors')})")
     g2 = pr.get("graph") or {}
     ok(g2.get("6", {}).get("class_type") == "MiniMaxH3ReferenceToVideo" and g2["6"]["inputs"]["ref_images.ref_image_0"] == ["20", 0]
@@ -2146,6 +2393,57 @@ def selftest(call, ok) -> None:
        and "whose outfit is shown in <Picture 3> and <Picture 4>" in pq2["prompt_sent"]
        and "whose body from behind is shown in <Picture 5>" in pq2["prompt_sent"] and "blanked out" not in pq2["prompt_sent"],
        f"Qualité : les 5 crops de la méthode .char, dans l'ordre de Cal ({lab(pq2)})")
+    # l'audit du 09/10 : deux personnages complets (5 + 5 images) se partagent les 9 places d'H3, chacun garde son
+    # identité d'abord ; la grammaire @ partout ; les plans et leurs temps ; les définitions en anglais ; la voix (Sx)
+    mentions.selftest(ok)
+    st, eira2 = call("POST", "/api/elements", {"title": "Eira bis", "type": "character", "description": "a 16-year-old girl",
+                                               "refs": [{"item": sid, "role": r, "label": lab} for r, lab in kinds]})
+    two = {"element": [{"item": eira.get("id")}, {"item": eira2.get("id")}]}
+    p2 = plan("r2v", {"inputs": two, "desc": "@element1 and @element2 walk.", "method": "qualite"})
+    lab2 = [x["label"] for x in p2["pictures"]]
+    ok(p2["ok"] and len(lab2) == 9 and lab2[:5] == [f"Eira · {x}" for x in ("visage face", "visage 3/4", "tenue haut", "tenue bas", "corps dos")]
+       and lab2[5:] == [f"Eira bis · {x}" for x in ("visage face", "visage 3/4", "tenue haut", "tenue bas")]
+       and any(n.startswith("@element2") and "4 images sur 5" in n and "corps dos" in n for n in p2["notes"]),
+       f"deux personnages complets : 9 images, le second laisse son dos, et c'est dit ({lab2} {p2['errors']})")
+    pb2 = plan("r2v", {"inputs": two, "desc": "@element1 and @element2 walk.", "method": "brouillon"})
+    ok(pb2["ok"] and len(pb2["pictures"]) == 9 and pb2["pictures"][5]["label"] == "Eira bis · planche corps 3 vues visage masqué"
+       and "visage 3/4 sourire" not in pb2["pictures"][8]["label"],
+       f"Brouillon, deux personnages : la planche gardée, le 3/4 sourire laissé d'abord ({[x['label'] for x in pb2['pictures']]})")
+    # Images : @image1 et @image2 sont la première et la dernière image envoyées
+    pi = plan("i2v", {"start": sid, "end": fid, "desc": "@image1 turns into @image2."})
+    ok(pi["ok"] and pi["mentions"] == {"@image1": "<Picture 1>", "@image2": "<Picture 2>"}
+       and "[Shot 1] <Picture 1> turns into <Picture 2>." in pi["prompt_sent"] and "@image" not in pi["prompt_sent"],
+       f"images : la même grammaire, @image1 → <Picture 1> ({pi['errors']})")
+    pi3 = plan("i2v", {"end": fid, "desc": "@image2 lands."})
+    ok(not pi3["ok"] and any("@image2" in e and "mode Images" in e for e in pi3["errors"]), "images : @image2 sans seconde image est refusé, dit")
+    # les plans : un temps de coupe hors de la durée bloque, un plan suivant sans temps est dit
+    ps = plan("r2v", {"inputs": ins, "desc": "[Shot 1] @element1 runs. [Shot 2] At 00:09.000, @image1 at night. [Shot 3] He stops."})
+    ok(not ps["ok"] and any(e.startswith("[Shot 2] coupe à 00:09.000, après la fin") for e in ps["errors"])
+       and any("[Shot 3] sans temps de coupe" in n for n in ps["notes"]), f"plans : la durée relue ({ps['errors']} {ps['notes']})")
+    pr3 = plan("r2v", {"inputs": ins, "desc": "Live-action.\n[Shot 1] @image1 at dawn.\n[Shot 2] At 00:02.500, @element1 enters.",
+                       "subjects": {"@element1": "a lean man in his thirties with a grey hoodie", "image1": "a quiet harbour"},
+                       "summary": "@element1 walks into @image1.", "format": "16:9", "method": "esquisse"})
+    s3 = pr3["prompt_sent"]
+    ok(pr3["ok"] and "<Subject 2> is MJ Survêt, a lean man in his thirties with a grey hoodie, whose face" in s3
+       and "<Subject 1> is a quiet harbour, shown in <Picture 1>." in s3 and "[reference generation] <Subject 2> walks into <Subject 1>." in s3
+       and "<Subject 2> (appears in [Shot 2])" in s3 and "<Subject 1> (appears in [Shot 1])" in s3
+       and "detailed_description:\nr34l1sm. DY. Live-action.\n[Shot 1]" in s3 and pr3["subjects"][1]["described"] == "mise en forme",
+       f"définitions en anglais, résumé, rétention par plan réel, le style avant [Shot 1] ({s3[:300]!r})")
+    ok((pr3["width"], pr3["height"], pr3["stages"], pr3["family"]) == (672, 384, 1, "16:9") and pr3["draft"] is None,
+       f"l'échelle : Esquisse en 16:9 = 672 × 384 en un étage ({pr3['width']}×{pr3['height']})")
+    pfr = plan("r2v", {"inputs": {"element": [{"item": ev["id"]}]}, "desc": "@element1 (S1) dit : <d>[French] Bonjour !</d> et il mange avec les mains."})
+    ok(pfr["ok"] and "<Audio 1> is the voice-timbre reference for <Subject 1> (S1)." in pfr["prompt_sent"]
+       and any("en français" in n and "anglais" in n for n in pfr["notes"]) and pfr["language"] == "fr",
+       f"la voix d'un élément reprend son (S1) ; un texte français est dit avant le rendu ({pfr['notes']})")
+    sc = opts.get("scale") or {}
+    fm = {f["id"]: f["sizes"] for f in sc.get("formats", [])}
+    ok(list(fm) == ["2.4:1", "21:9", "16:9", "4:3", "1:1", "3:4", "9:16"]
+       and [(fm["2.4:1"][m]["w"], fm["2.4:1"][m]["h"]) for m in METHODS] == [(768, 320), (1152, 480), (1536, 640), (1920, 800)]
+       and (fm["16:9"]["brouillon"]["w"], fm["16:9"]["brouillon"]["h"], fm["16:9"]["brouillon"]["draft"]) == (1344, 768, [672, 384])
+       and (fm["9:16"]["brouillon"]["w"], fm["9:16"]["brouillon"]["h"]) == (768, 1344)
+       and all(x["w"] % 32 == 0 and x["h"] % 32 == 0 for f in fm.values() for x in f.values())
+       and fm["16:9"]["esquisse"]["estimate"]["high"] < fm["16:9"]["brouillon"]["estimate"]["low"],
+       f"l'échelle : la recette de Cal au 2,4:1, 1344 × 768 en 16:9, 768 × 1344 en 9:16, multiples de 32, l'Esquisse plus courte ({fm.get('16:9')})")
     # un élément versionné : sa matière est dans sa dernière version (library.resolve) ; sans version, c'est dit
     st, liv = call("POST", "/api/elements", {"from_item": eira.get("id"), "title": "Eira vivante"})
     pvv = plan("r2v", {"inputs": {"element": [{"item": liv.get("id")}]}, "desc": "@element1 runs.", "method": "qualite"})
@@ -2282,6 +2580,16 @@ def selftest(call, ok) -> None:
             made.append(v)
         st, hist = call("GET", "/api/library?kind=video&tool=movie")
         ok(st == 200 and hist["total"] == 3, "l'historique : les vidéos de l'outil")
+        # le diagnostic d'Admin « Rendus · ce que le modèle a reçu » (tools/diag_rendus.py) relit ces rendus
+        r = subprocess.run(["python3", str(config.REPO / "tools" / "diag_rendus.py"), "3"], capture_output=True, text=True,
+                           timeout=60, cwd=str(config.REPO))
+        rv = made[2] if len(made) > 2 else {}
+        ok(r.returncode == 0 and "3 vidéo(s) de l'outil Vidéo" in r.stdout and f"VIDÉO {rv.get('id')}" in r.stdout
+           and "<Picture 2>   MJ Survêt · visage" in r.stdout and "mentions : @image1 → <Subject 1>, @element1 → <Subject 2>" in r.stdout
+           and "--- l'invite envoyée à H3" in r.stdout and "[Shot 1] <Subject 2> walks in <Subject 1>." in r.stdout,
+           f"diagnostic : ce que H3 a reçu, relu dans la bibliothèque ({r.returncode} {(r.stderr or r.stdout)[-400:]!r})")
+        st, dl = call("GET", "/api/admin/diag")
+        ok(st == 200 and any(d["id"] == "rendus" for d in dl.get("diags", [])), "le diagnostic est dans Admin → Diagnostics")
 
         def wait(jid):
             for _ in range(300):

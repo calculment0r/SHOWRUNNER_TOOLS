@@ -6,10 +6,11 @@
 //   [Shot 1] <ce qu'on voit>  <personnage> (S1) says: <d>[French] la réplique</d>
 //   [Shot 2] …
 //
-// Les sources de la forme : les plans « [Shot n] » (server/tools/movie.py, _shot) ; la réplique « (S1) says: <d>[Langue] … </d> »
-// (l'aide « Réplique » de la page Vidéo, les guides MiniMax). Ce qui n'est PAS établi, et donc facultatif : la durée de chaque
-// plan écrite dans le texte (« about 3.2 seconds ») — H3 ne documente, d'après ce que le portail sait, que l'ordre des plans ;
-// la case est éteinte par défaut, à essayer en A/B avant d'y croire. La durée totale, elle, est celle du curseur de la page.
+// Les sources de la forme : le guide officiel d'H3 (MiniMax-AI/MiniMax-H3, skills/h3-prompt-writing/references/base-en.txt,
+// relu le 09/10) — § 4.2 : « Do not add a timestamp to the first shot […] begin each one with a strictly increasing cut time
+// that falls within the video duration: [Shot 2] At 00:03.500, the camera cuts to… » ; § 4.4 : « (S1) says: <d>[Langue] …
+// </d> », un identifiant de voix stable par personne. Les temps de coupe s'écrivent donc toujours (jusqu'au 09/10, une case
+// éteinte écrivait « (about N seconds) », une forme que le guide ne connaît pas). La durée totale est celle de la page.
 //
 //   plan = { id, secs, text, lines: [{ who, text }] }       who : « @element1 », « the old man », ou '' (S1 sans nom)
 
@@ -74,8 +75,16 @@ export function auto(text, n, total) {
   return shots;
 }
 
-// le prompt : les plans dans l'ordre ; les personnages numérotés S1, S2… dans l'ordre où ils parlent
-export function compose(shots, { lang = 'fr', durations = false } = {}) {
+// « 00:03.500 » : le temps de coupe d'un plan, comme le guide l'écrit (server/tools/movie.py, cut_time)
+export function cutTime(s) {
+  const ms = Math.round(Math.max(0, s) * 1000);
+  const p = (n, k) => String(n).padStart(k, '0');
+  return `${p(Math.floor(ms / 60000), 2)}:${p(Math.floor((ms % 60000) / 1000), 2)}.${p(ms % 1000, 3)}`;
+}
+
+// le prompt : les plans dans l'ordre, chaque plan suivant avec son temps de coupe ; les personnages numérotés S1, S2…
+// dans l'ordre où ils parlent
+export function compose(shots, { lang = 'fr' } = {}) {
   const name = LANG[lang] || LANG.fr;
   const ids = new Map();
   const sid = (who) => {
@@ -83,21 +92,26 @@ export function compose(shots, { lang = 'fr', durations = false } = {}) {
     if (!ids.has(k)) ids.set(k, ids.size + 1);
     return ids.get(k);
   };
+  let at = 0;
   return shots.map((p, i) => {
     const said = (p.lines || []).filter((l) => (l.text || '').trim()).map((l) => {
       const who = (l.who || '').trim();
       return `${who ? who + ' ' : ''}(S${sid(who)}) says: <d>[${name}] ${l.text.trim()}</d>`;
     });
-    const head = `[Shot ${i + 1}]${durations ? ` (about ${String(r1(p.secs))} seconds)` : ''}`;
+    const head = `[Shot ${i + 1}]${i ? ` At ${cutTime(at)},` : ''}`;
+    at += p.secs;
     return [head, (p.text || '').trim(), ...said].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
   }).join('\n');
 }
 
-// retour : un prompt déjà écrit en [Shot n] redevient des plans (texte et répliques) ; sans [Shot], un seul plan
+// retour : un prompt déjà écrit en [Shot n] redevient des plans (texte et répliques ; les temps de coupe « At 00:03.500, »
+// redonnent les durées) ; sans [Shot], un seul plan
+const SHOT_RX = /\[Shot \d+\](?:\s*At (\d{1,2}):(\d{1,2}(?:\.\d{1,3})?)\s*,?)?/g;
 export function parse(desc, total) {
   const src = String(desc || '').trim();
   const has = /\[Shot \d+\]/.test(src);
-  const parts = has ? src.split(/\[Shot \d+\]/).map((s) => s.trim()) : [src];
+  const cuts = [...src.matchAll(SHOT_RX)].map((m) => (m[1] != null ? Number(m[1]) * 60 + Number(m[2]) : null));
+  const parts = has ? src.split(SHOT_RX).filter((_, k) => k % 3 === 0).map((s) => s.trim()) : [src];
   const lead = has ? parts.shift() : '';           // une ligne de look avant [Shot 1] : gardée dans le premier plan
   const bodies = parts.length ? parts : [''];
   const shots = bodies.map((b, i) => {
@@ -110,6 +124,12 @@ export function parse(desc, total) {
     }).replace(/\s+/g, ' ').trim();
     return plan(1, text, lines);
   });
+  // des temps de coupe tous lus, croissants, dans la durée : les durées en découlent ; sinon, parts égales
+  const t = [0, ...cuts.slice(1)];
+  if (has && t.length === shots.length && t.every((x, k) => x != null && (k === 0 || (x > t[k - 1] && x < total)))) {
+    shots.forEach((p, k) => { p.secs = r1((k < shots.length - 1 ? t[k + 1] : total) - t[k]); });
+    return shots;
+  }
   return fit(shots, total);
 }
 

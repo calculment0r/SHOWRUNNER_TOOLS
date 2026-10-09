@@ -10,7 +10,6 @@
 .ms-t { font-family: var(--f-mono); font-size: 9px; letter-spacing: .2em; text-transform: uppercase; color: var(--ink); }
 .ms-n { margin-right: 4px; }
 .ms-head .tb.sm { height: 24px; }
-.ms-chk { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: var(--ink2); cursor: pointer; white-space: nowrap; }
 .ms-lang { width: auto; height: 24px; padding: 0 6px; font-size: 11px; }
 
 /* la frise : à l'échelle de la plus longue vidéo d'H3 ; la vidéo occupe sa durée, le reste est la place qu'elle peut prendre */

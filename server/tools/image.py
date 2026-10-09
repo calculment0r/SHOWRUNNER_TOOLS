@@ -56,7 +56,7 @@ import threading
 import time
 from pathlib import Path
 
-from core import auth, config, jobs, library
+from core import auth, config, jobs, library, mentions
 from core.comfy import Comfy, ComfyError
 from core.http import HttpError
 
@@ -531,14 +531,70 @@ def _sentence(s: str) -> str:
     return s if not s or s[-1] in ".!?»\"'" else s + "."
 
 
+# ── les mentions « @ » : la grammaire commune, compilée pour chaque modèle ──
+# La personne écrit @image1, @element1 (core/mentions.py : une sorte, une place, chaque sorte comptée à part dans
+# l'ordre du carrousel), comme dans Vidéo ; chaque modèle reçoit SA convention, documentée :
+#   Qwen-Image 2.1  <image1>, <image2>… dans l'ordre d'envoi (comfy/text_encoders/qwen_image21.py : « <image%d> »
+#                   devant chaque image ; note du gabarit officiel « Mention them in the prompt as <image1>,
+#                   <image2> ») ; en édition, l'image éditée est <image1>, les références suivent ;
+#   Krea 2          aucune étiquette : deux entrées, la scène puis le sujet (README comfyui-krea2edit : « scene image
+#                   → source_latent, subject image → source_latent_b » ; ses consignes sont en langage courant,
+#                   « place her on a beach at sunset ») — la mention devient « the scene » ou « the subject » ;
+#   Z-Image         aucune image d'entrée : une mention ne désigne rien, le rendu est refusé avant de partir.
+def mention_table(model: str, kinds: list[str], mode: str = "generate") -> dict:
+    """{clé: ce que le modèle lit} pour les places ENVOYÉES (`kinds` : 'image' | 'element', dans l'ordre)."""
+    keys = mentions.places(kinds)
+    if model == "qwen21":
+        first = 2 if mode == "edit" else 1
+        return {k: f"<image{first + i}>" for i, k in enumerate(keys)}
+    if model == "krea2":
+        names = ["the scene", "the subject"] if (mode == "generate" and len(keys) == 2) else ["the subject"]
+        return {k: names[min(i, len(names) - 1)] for i, k in enumerate(keys)}
+    return {}
+
+
+def check_mentions(model: str, prompt: str, sent: list, held: list, mode: str = "generate") -> None:
+    """Toute mention qui ne se résout pas est refusée avant le rendu (ValueError, dite à la page) : une place vide,
+    une référence grisée (au-delà de ce que prend le modèle), un modèle sans référence. Pour Qwen, un <imageN>
+    écrit à la main est relu aussi."""
+    kind = lambda r: (library.get(r["item"]) or {}).get("kind", "image")  # noqa: E731
+    k_sent = [kind(r) for r in sent]
+    every = mentions.places(k_sent + [kind(r) for r in held])
+    table = mention_table(model, k_sent, mode)
+    bad, _ = mentions.check([prompt], table)
+    if bad:
+        name = MODELS[model]["name"]
+        late = [b for b in bad if b[1:].lower() in every[len(k_sent):]]
+        if not MODELS[model]["refs"]:
+            raise ValueError(f"{', '.join(bad)} : {MODELS[model].get('refs_why') or name + ' ne prend pas de référence'}")
+        if late:
+            raise ValueError(f"{', '.join(late)} : au-delà de ce que {name} prend ({len(k_sent)} envoyée"
+                             f"{'s' if len(k_sent) > 1 else ''}) — la référence reste grisée, non envoyée")
+        raise ValueError(f"ces mentions ne pointent vers rien : {', '.join(bad)} — @image1 est la première image du carrousel, "
+                         "@element1 le premier élément (chaque sorte comptée à part)")
+    if model == "qwen21":
+        top = (2 if mode == "edit" else 1) + len(k_sent) - 1
+        over = sorted({int(n) for n in re.findall(r"<image(\d+)>", prompt) if int(n) > top or int(n) < 1})
+        if over:
+            got = f"ne reçoit que <image1> à <image{top}>" if top > 1 else "ne reçoit que <image1>" if top == 1 else "ne reçoit aucune image"
+            raise ValueError(f"{', '.join(f'<image{n}>' for n in over)} : Qwen-Image 2.1 {got} — écrivez plutôt @image1, @element1…")
+
+
 def compose(model: str, prompt: str, looks: dict | None = None, refs: list[dict] | None = None,
             mode: str = "generate", keep_face: bool = False, transparent: bool = False, lora: dict | None = None) -> dict:
     """Le prompt réellement envoyé, et ce qui mérite d'être dit (`notes`).
-    `refs` : [{label}] dans l'ordre d'envoi, sans l'image éditée. `lora` : celui
-    d'un moodboard (lora.check_render), son mot déclencheur en tête."""
+    `refs` : [{label, kind}] dans l'ordre d'envoi, sans l'image éditée. `lora` : celui
+    d'un moodboard (lora.check_render), son mot déclencheur en tête. Les mentions
+    (@image1, @element1) deviennent ce que le modèle lit (mention_table)."""
     looks = looks or {}
     refs = refs or []
     notes = []
+    table = mention_table(model, [r.get("kind") or "image" for r in refs], mode)
+    if mentions.scan(prompt):
+        said = {f"@{k}": v for k, v in table.items() if re.search(rf"@{k}(?!\d)", prompt, re.I)}
+        if said:
+            notes.append("mentions : " + ", ".join(f"{k} → {v}" for k, v in said.items()))
+        prompt = mentions.swap(prompt, table)
     parts = [_sentence(prompt)]
     for g in LOOK_ORDER:
         lid = looks.get(g)
@@ -639,7 +695,7 @@ def _ref(r: dict) -> dict:
     who0 = it0.get("title") or it0["id"]
     if it["kind"] == "image":
         name = who0 if it is not it0 else (it.get("title") or it["id"])
-        return {"path": library.path_of(it), "label": f"“{name}”", "item": it["id"], "role": "", "title": name}
+        return {"path": library.path_of(it), "label": f"“{name}”", "item": it["id"], "role": "", "title": name, "kind": it0["kind"]}
     if it["kind"] != "element":
         raise ValueError(f"une référence est une image ou un élément : {it['id']}")
     refs = it["element"].get("refs") or []
@@ -651,7 +707,7 @@ def _ref(r: dict) -> dict:
     etype = (it0.get("element") or {}).get("type") or it["element"].get("type")
     label = f"{ROLE_EN.get(role, '')} {who}".strip() if etype == "character" else who
     return {"path": library.path_of(it, pick["file"]), "label": label, "item": it["id"], "role": role,
-            "title": f"{who} · {pick.get('label') or role}"}
+            "title": f"{who} · {pick.get('label') or role}", "kind": it0["kind"]}
 
 
 def _rgb(src: Path, dest: Path, longest: int | None = None) -> Path:
@@ -818,6 +874,7 @@ def check_generate(d: dict) -> dict:
     if model == "zimage" and variant not in m["variants"]:
         raise ValueError(f"Z-Image : variante inconnue {variant}")
     refs, held = split_refs(_refs(d.get("refs"), REFS_CAP, f"{REFS_CAP} références au plus"), m["refs"])
+    check_mentions(model, prompt, refs, held)
     out = {"model": model, "prompt": prompt, "looks": _looks(d.get("looks")), "aspect": aspect, "quality": quality,
            "width": wh[0], "height": wh[1], "seed": _seed(d.get("seed")), "refs": refs}
     if held:
@@ -855,6 +912,7 @@ def check_edit(d: dict) -> dict:
             raise ValueError("la consigne est vide")
         n_max = MODELS[model]["refs"] - 1  # l'image éditée compte
         refs, held = split_refs(_refs(d.get("refs"), REFS_CAP - 1, f"{REFS_CAP - 1} références au plus en plus de l'image éditée"), n_max)
+        check_mentions(model, prompt, refs, held, mode="edit")
         out.update(model=model, prompt=prompt[:6000], looks=_looks(d.get("looks")), keep_face=bool(d.get("keep_face")), refs=refs)
         if held:
             out["refs_held"] = held
@@ -1703,7 +1761,9 @@ def api_compose(req) -> dict:
             raise ValueError(f"modèle inconnu : {model}")
         # le carrousel entier arrive ; le prompt ne présente que les places envoyées
         send = MODELS[model]["refs"] - (1 if mode == "edit" else 0)
-        refs = [_ref(r) for r in split_refs(_refs(d.get("refs")), send)[0]]
+        sent, held = split_refs(_refs(d.get("refs")), send)
+        check_mentions(model, d.get("prompt") or "", sent, held, mode)
+        refs = [_ref(r) for r in sent]
         lo = None
         if mode == "generate" and d.get("lora"):
             from tools import lora
@@ -1871,6 +1931,23 @@ def selftest(call, ok) -> None:
     eid = el.get("id")
     st, c = call("POST", "/api/image/compose", {"model": "qwen21", "prompt": "she sits at a table", "refs": [{"item": eid}]})
     ok(st == 200 and "<image1> shows the face of Maren." in c["prompt"] and c["notes"], f"image : Qwen présente <image1> ({c})")
+    # les mentions « @ » (l'audit du 09/10) : la grammaire de Vidéo, compilée pour chaque modèle
+    st, c = call("POST", "/api/image/compose", {"model": "qwen21", "prompt": "@element1 holds @image1", "refs": [iid, {"item": eid}]})
+    ok(st == 200 and c["prompt"].startswith("<image2> holds <image1>.") and any("@element1 → <image2>" in n for n in c["notes"]),
+       f"mentions : Qwen lit <imageN> à la place du carrousel ({c})")
+    st, c = call("POST", "/api/image/compose", {"model": "krea2", "prompt": "place @element1 in @image1", "refs": [iid, {"item": eid}]})
+    ok(st == 200 and c["prompt"].startswith("place the subject in the scene."), f"mentions : Krea 2 lit la scène puis le sujet ({c})")
+    st, c = call("POST", "/api/image/compose", {"model": "qwen21", "mode": "edit", "prompt": "add the hat of @image1", "refs": [iid]})
+    ok(st == 200 and c["prompt"].startswith("add the hat of <image2>."), f"mentions : en édition Qwen, l'image éditée est <image1> ({c})")
+    for body, why, what in (
+            ({"model": "zimage", "prompt": "@image1 at dawn"}, "sans référence", "Z-Image : une mention est refusée"),
+            ({"model": "krea2", "prompt": "@image2 in the scene", "refs": [iid, eid, iid]}, "au-delà de ce que Krea 2 prend",
+             "Krea 2 : une mention d'une référence grisée est refusée"),
+            ({"model": "qwen21", "prompt": "@element2 smiles", "refs": [{"item": eid}]}, "ne pointent vers rien", "une mention sans place est refusée"),
+            ({"model": "qwen21", "prompt": "<image3> smiles", "refs": [iid, iid]}, "ne reçoit que <image1> à <image2>",
+             "Qwen : un <image3> écrit à la main au-delà des envoyées est refusé")):
+        st, r = call("POST", "/api/image/generate", {**body, "dry": True})
+        ok(st == 400 and why in (r.get("error") or ""), f"{what} ({st} {r})")
     st, c = call("POST", "/api/image/compose", {"model": "qwen21", "prompt": "<image1> at a table", "refs": [{"item": eid}]})
     ok(st == 200 and "shows" not in c["prompt"], "image : une <image1> déjà nommée n'est pas répétée")
     # Qwen 2.1 : 10 références (README) ; au-delà des 3 du turbo, une note, rien de bloqué
