@@ -2,6 +2,8 @@
 
 > **09/10** : le modèle de langue « à l'entrée » du § 1 (comprendre une demande, choisir dans le catalogue) est repris par `agent_autonome.md` (le routeur et le registre des capacités, sur DGX2).
 
+> **09/10** : l'état des machines au survol du nom (mémoire, GPU) : ce qui est mesuré et d'où, « Fait le 09/10 » en fin d'étude.
+
 La demande de Cal (29/09), mot pour mot :
 
 > « je me demande si on va pas être obligé d'avoir un petit modèle d'IA
@@ -1080,3 +1082,71 @@ cgroup-v2 et sysctl vm ; Razer (Blade 16/18, Core X V2) ; Tailscale
 (unattended, Wake-on-LAN) ; Microsoft (Wake-on-LAN) ; fiches des modèles
 (Z-Image, Krea 2, Qwen-Image 2.1, MiniMax H3, SeedVR2, YuE2, TRELLIS.2,
 UniRig, Demucs).
+
+## Fait le 09/10 — l'aperçu au survol du nom (branche `wip3/apercu-machines`)
+
+La demande de Cal (09/10), ses mots : « je veux, au survol de mon nom en haut à droite, un aperçu
+rapide de l'état des DGX en termes de mémoire et GPU, et aussi un aperçu des travaux en cours de
+calcul avec leur avancement. Un truc super minimal. »
+
+**Ce qu'on voit** (`commun/apercu.js`, styles dans `commun/shell.css`) : une bulle de valeurs, sans
+phrase, sous le nom. Par machine : son nom, une barre fine et « utilisée / totale Go », « GPU 37 % »
+ou « GPU non mesuré ». Puis les travaux en cours, le plus ancien d'abord (titre, machine, pourcentage
+— sinon l'étape que le travail dit —, une barre), cinq au plus (« +n » au-delà), et deux chiffres :
+en cours, en file. Ni orange ni bouton (une note, pas une action) ; capitales mono pour ce que dit la
+machine, le titre d'un travail en bas de casse ; la mémoire en acier (`--cy`, les valeurs lues),
+l'avancement en vert (`--grn2`, la progression).
+
+**Ce qui est mesuré, et d'où** (`server/tools/machines_apercu.py`, `GET /api/machines/apercu`) — une
+seule commande par machine, sur la machine même : `sh` pour celle du portail, `ssh -o BatchMode=yes`
+par le câble pour l'autre (le chemin de `movie._on_host` ; `docs/INSTALL_LORA.md` : « `ssh -o
+BatchMode=yes 169.254.110.6 true` marche depuis DGX2 ») :
+- **la mémoire** : `MemTotal − MemAvailable` de `/proc/meminfo`. Sur un GB10 la mémoire est unifiée :
+  la mémoire du GPU est celle de la machine. `nvidia-smi` écrit « Not Supported » pour la mémoire
+  (relevé du 29/09, § 3.2 ; la page « Known Issues » de NVIDIA pour DGX Spark le dit aussi : un iGPU n'a
+  pas de mémoire dédiée — [extrait de recherche], la page est fermée depuis le conteneur), et
+  `MemAvailable` voit ce que CUDA alloue (§ 3.3). Si la commande ne répond pas : le relevé de la file
+  (`/system_stats` de ComfyUI, ce que lit Admin → Machines), borné par la cgroup du service quand il y
+  en a une (§ 3.2 : DGX1 annonce 100 Gio au lieu de 121,7) ; le survol de la ligne dit lequel ;
+- **le GPU** : `nvidia-smi --query-gpu=utilization.gpu --format=csv,noheader,nounits`, la lecture de
+  `analyse/chaine/gpu-libre.sh`, sous `timeout 3` (un `nvidia-smi` qui pend s'arrête sur la machine
+  même). D'après `nvidia-smi --help-query-gpu` : la part du temps, sur la dernière période
+  d'échantillonnage (1 s à 1/6 s selon la carte), pendant laquelle un noyau tournait. Sur un GB10 :
+  un nombre d'après des relevés publiés sur le forum de NVIDIA (0 % au repos, 96 % en charge)
+  [extrait de recherche] ; NVIDIA ne le documente pas pour ce produit. Tout ce qui n'est pas un nombre
+  de 0 à 100 (« [N/A] », « [Not Supported] », pas de `nvidia-smi`, ssh refusé, délai dépassé) : « non
+  mesuré », et la raison au survol de la ligne, pour Cal seulement (l'audit du 28/09, B2 : les
+  erreurs internes cachées aux amis).
+
+**Le compte des requêtes** (`docs/etudes/cloudflare.md`) : bulle fermée, aucune ; les travaux viennent
+de la liste que l'en-tête relève déjà (un meneur par navigateur, rien onglet caché), repeinte à chaque
+liste reçue, sans requête ; les machines, une requête par ouverture, resservie 5 s par la page et par
+le serveur (une lecture à la fois, les machines en parallèle, 4 s au plus chacune) ; refusée (401,
+403), plus demandée sur la page.
+
+**Qui voit quoi** : Cal, toute la file et les raisons ; un ami, ses travaux (`mine`) et les machines
+— le portail les lui montrait déjà (`GET /api/system`, la ligne « Machines » du menu du nom) ;
+l'invité d'une planche, ni les machines (la porte du socle lui ferme la route) ni la file des autres.
+
+**Quand** : au survol à la souris ou au stylet (après 200 ms), au focus clavier (`:focus-visible`) ;
+elle reste tant que le pointeur est sur le nom ou sur elle (WCAG 2.1, 1.4.13 : on peut la survoler) ;
+Échap la ferme ; le clic ouvre le menu du compte, qui prend sa place. **Au doigt : rien** — toucher le
+nom ouvre son menu, qui porte déjà la file de rendu et l'état des machines ; un appui long ne se
+devine pas, et le système le prend (la sélection, la loupe d'iOS). Le nom perd sa bulle du navigateur
+(`title`, qui se serait posée sur l'aperçu) : son texte passe à `aria-label`, qui commence par le nom
+affiché (WCAG 2.5.3).
+
+**Vérifié** (dans le conteneur, sans DGX) : le selftest du module (21 contrôles : la lecture de la
+sortie, « [N/A] », « [Not Supported] », pas de `nvidia-smi`, une machine éteinte, une machine qui ne
+répond pas à temps, le délai de 5 s, la vraie commande sur la machine du contrôle, l'ami sans les
+raisons, l'invité refusé) ; `commun/pilote_apercu.mjs` (102 contrôles, sombre et clair, 1280 et 390 px,
+contre `tools/portail_essai.py` avec `SR_FAUX_MACHINES=1` : deux faux ComfyUI et la mesure remplacée).
+
+**Ce qui reste à voir sur les DGX** :
+1. Que `utilization.gpu` rende un nombre sur nos GB10 (pilote 580.142) — au premier survol : un
+   pourcentage, ou « non mesuré » et sa raison au survol de la ligne.
+2. Que `nvidia-smi` soit dans le `PATH` d'une session ssh non interactive de DGX1 (`/usr/bin` sur DGX OS :
+   non vérifié), et ce que coûte une ouverture (la poignée de main ssh, `nvidia-smi` sans mode
+   persistant) : non mesuré.
+3. Non montré, pour rester minimal : la mémoire GPU par processus (`--query-compute-apps`, § 3.1), la
+   pause ou la vidange d'une machine (le tiroir de la file et Admin → Machines le disent).
