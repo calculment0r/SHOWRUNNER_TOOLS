@@ -115,9 +115,22 @@ Un **élément** est une entité réutilisable faite de références nommées :
 ```
 
 Rôles de référence en usage : `face`, `full body`, `expression`, `outfit`,
-`view`, `detail`, `style`. Un outil qui prend des références accepte
-indifféremment une image ou un élément (`library.ref_paths(item, roles)`
-rend les fichiers dans l'ordre).
+`view`, `detail`, `style`, `sheet` (09/10 : la planche d'un objet pour H3). Un
+outil qui prend des références accepte indifféremment une image ou un élément
+(`library.ref_paths(item, roles)` rend les fichiers dans l'ordre).
+
+Un **objet** d'Object Creator (`type: object`, 09/10, `server/tools/objet_vues.py`,
+`docs/etudes/objet_scenes_3d.md`) porte en plus : ses vues gardées en références
+`view` avec leur angle (`az` : l'azimut depuis la face, vers la GAUCHE de l'objet —
+90° voit son côté gauche, la convention de Pixal3D ; `el` : 0, 30, 60, 90) ; sa
+planche en référence `sheet` ; `meshes[]` (les GLB) et, par mesh, `rendus[]` (ses
+rendus : `{file, az, el, label, thumb}`) ; `vues` (le plan : l'image choisie et son
+angle, les passes, une place par vue — `{id, az, el, pass, state, job, items, ref,
+pick, from, seed, why}` —, la face du modèle 3D), **déduit à chaque lecture** de
+l'élément et de la file (une vue n'est gardée que si sa référence est là) ; `classe`
+(ce que montre l'image : objet, bâtiment, décor, intérieur, personnage, dite ou
+proposée par le modèle qui voit). Vidéo envoie à H3 sa planche puis ses vues, quatre
+images au plus (`movie.object_parts`).
 
 La page reçoit chaque objet par `library.public()` : avec `url`,
 `thumb_url` (relatives à la racine du portail), et pour un élément
@@ -451,7 +464,7 @@ réel est écrit, vérifié à vide, et s'allume par un réglage de
 | Présentation · PDF (Idéation, 06/10, `server/tools/presentation_pdf.py`) | `GET /api/ideation/presentation/pdf` (la machine sait-elle imprimer : `{ok, why, node, playwright, version, chromium, refused_fonts}`), `POST /api/ideation/boards/<id>/pdf {pdf, png}` (le travail ; 409 sans diapositive) — Chromium sans affichage (`tools/presentation_export.mjs`) imprime LA page de lecture (`lecture.html?print`, `scene.js`) : chaque diapositive à son état final, une page nommée par taille de scène (16:9 = 1440 × 810 pt), `page.pdf` (vectoriel) et une capture PNG par page en option ; les données de la page viennent du travail (lues au nom de la personne, servies par `page.route`), ni session ni jeton. Le PDF : un `document` (dossier « Idéation », sans poppler son texte et sa couverture par la page : `documents.deposer`) ; les images : des `image`. Une police dont la licence refuse le PDF (`FONTS`, `pdf`) le refuse. Ce qui ne s'imprime pas (vidéo, Web, son) : son image fixe et un pied discret. La page : `ideation/presentation/export.js` (le bouton du mode, `jobs.watch`) ; le pilote : `ideation/pilote_pdf.mjs` | `presentation.pdf` (voie cpu, `cost` cpu) | `presentation_node`, `presentation_playwright` (défaut `~/Character_Sheet`, celui de `tools/shot.mjs`), `presentation_chromium` ; le diagnostic `presentation` d'Admin |
 | Présentation · vidéo (Idéation, 06/10, `server/tools/presentation_video.py`, `docs/etudes/presentations_motion.md` § 10) | `POST /api/ideation/boards/<id>/video {slide?, fps?, scale?, hold?}` (le travail ; 409 sans diapositive ; `GET /api/ideation/presentation/pdf` dit aussi `ffmpeg`) — Chromium sans affichage ouvre LA page de lecture en rendu (`lecture.html?video`, `programme.js` : la présentation, ou une diapositive, bout à bout comme le lecteur la joue) ; pour chaque image, `SR_RENDU.seek(k / fps)` la pose à son instant exact (la frise, la transition, la sortie, les vidéos ; l'image figée : le même instant, les mêmes pixels), une capture PNG donnée à ffmpeg (libx264, yuv420p, CRF 16, BT.709, +faststart) ; 1080p, ou 2160p (`scale: 2`). La vidéo : une `video` (dossier « Idéation »). Une police dont la licence refuse le PDF refuse aussi la vidéo. Les images clés par propriété et les courbes libres du motion : `ideation/presentation/courbes.js` ; le pilote : `ideation/pilote_motion.mjs` | `presentation.video` (voie cpu, `cost` cpu) | ceux de Présentation · PDF, et ffmpeg dans le PATH |
 | Paroles calées (`commun/lrc.js`) | `GET /api/paroles/<id>` (le LRC, les paroles connues, l'état du calage, ce qu'on peut faire), `POST /api/paroles/<id> {lrc}` (à la main : relu, trié), `POST /api/paroles/<id>/caler {paroles?, langue?, voix?}` (la chaîne : `music.stems` la voix seule, `transcrire.transcribe` complet, puis le calage ; l'état dans `<data_dir>/paroles/<id>.json`) — `server/tools/paroles.py` ; la mesure sur des LRC calés à la main : `tools/paroles_mesure.py` | `paroles.caler` (voie cpu : l'alignement) | ceux de la séparation et de Transcrire |
-| Object Creator | `/api/objet/state` (les instances ComfyUI de la voie `image` seulement : une entrée `local` n'en est pas une), `objects` | `objet.mesh` (TRELLIS.2), `objet.mesh_factice` | `"objet_trellis": true` |
+| Object Creator | `/api/objet/state` (les instances ComfyUI de la voie `image` seulement : une entrée `local` n'en est pas une ; `vues` : le générateur, les angles, les passes, les classes, le modèle qui voit), `objects` ; les vues (09/10, `objet_vues.py`) : `GET /api/objet/{eid}/vues` (le plan, ses images, `go`, `pass_open`), `POST …/vues/source {az, el, file?}`, `…/vues/plan {pass: 2} \| {az, el}`, `…/vues/generer {slots?, seed?}` (un travail par vue ; la garde du calcul avant tout), `…/vues/{sid} {action: garder \| poser \| rejeter \| rouvrir \| retirer, item?}`, `…/classe {value}`, `…/classer`, `…/face {face}`, `…/rendus`, `…/planche` | `objet.mesh` (TRELLIS.2), `objet.mesh_factice` ; `objet.vue` (voie image : Qwen-Edit 2511 · angles, AnyAngle), `objet.vue_factice`, `objet.rendus` (voie image : Render Mesh natif), `objet.rendus_factice`, `objet.planche` (cpu, PIL), `objet.classer` (le modèle qui voit : voie audio épinglée, cpu sans elle) | `"objet_trellis": true` ; `"objet_vues": "factice" \| "qwen-edit-2511" \| "qwen21-anyangle"` ; `"objet_rendus": true` |
 | Movie Analysis | `/api/analyse/list`, `projets` (GET la liste fusionnée : nos films, les analyses d'ici, les projets du portail et du dépôt partagé ; POST `{nom}` un projet), `projets/<id>` (POST `{nom}` renommer, `{supprime}` retirer ou restaurer), `corrections/<film>` (GET, PUT : les corrections des voix et du casting, gardées dans le portail), `diarisation`, `chaine`, `nom/<nom>`, `run`, `diar/etat`, `diar/fichiers`, `diar/travaux`, `diar/travail/<id>` (GET, DELETE), `diar/analyse` (relais vers DGX1 :10002) | `analyse.run` (voie analyse, une à la fois) | — |
 | Upscale | `/api/upscale/models`, `plan`, `run` | `upscale.image`, `upscale.video` (voie image ; cpu en factice) | `"upscale_backend": "comfyui"` |
 | Character Factory | `/character/api/*`, `/character/files/*`, `/character/v1/*` : relais en flux vers le studio de DGX1 | (la file du studio, sur DGX1) | — |
