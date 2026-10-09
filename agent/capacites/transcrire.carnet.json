@@ -1,0 +1,50 @@
+{
+ "id": "transcrire.carnet",
+ "label": "Le carnet d'une transcription · Transcrire",
+ "intentions": [
+  "media.analyser"
+ ],
+ "outil": "transcrire",
+ "travail": "transcrire.notes",
+ "route": "POST /api/transcrire/docs/{tid}/notes",
+ "entrees": {
+  "son": {
+   "sorte": [
+    "audio",
+    "video"
+   ],
+   "requis": true
+  }
+ },
+ "sortie": {
+  "sorte": "document"
+ },
+ "criteres": [
+  {
+   "si": "son_cite",
+   "poids": 1,
+   "pourquoi": "le résumé, les questions d'une transcription"
+  }
+ ],
+ "limites": [],
+ "etat": {
+  "exige": {
+   "interrupteur": "transcrire_moteur=local"
+  }
+ },
+ "cout": {
+  "classe": "gpu",
+  "famille": "ollama-carnet",
+  "estimation": "durations.json"
+ },
+ "consentement": "rendu",
+ "licence": {
+  "nom": "non relevée dans le dépôt",
+  "lue": false
+ },
+ "sources": [
+  "docs/etudes/transcrire.md"
+ ],
+ "rempli_par": "agent_autonome.md",
+ "verifie": "2026-10-09"
+}

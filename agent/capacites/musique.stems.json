@@ -1,0 +1,48 @@
+{
+ "id": "musique.stems",
+ "label": "Séparer un son · ODIO (stems)",
+ "intentions": [
+  "musique.creer"
+ ],
+ "outil": "musique",
+ "travail": "music.stems",
+ "route": "POST /api/music/stems/separate",
+ "entrees": {
+  "son": {
+   "sorte": "audio",
+   "requis": true
+  }
+ },
+ "sortie": {
+  "sorte": "son"
+ },
+ "criteres": [
+  {
+   "si": "son_cite",
+   "poids": 1,
+   "pourquoi": "un son cité"
+  }
+ ],
+ "limites": [],
+ "etat": {
+  "exige": {
+   "interrupteur": "music_stems=true"
+  }
+ },
+ "cout": {
+  "classe": "gpu",
+  "famille": "demucs",
+  "estimation": "durations.json"
+ },
+ "consentement": "rendu",
+ "licence": {
+  "nom": "non relevée dans le dépôt",
+  "lue": false
+ },
+ "sources": [
+  "docs/etudes/musique_generatif.md",
+  "docs/etudes/musique_app.md"
+ ],
+ "rempli_par": "agent_autonome.md",
+ "verifie": "2026-10-09"
+}

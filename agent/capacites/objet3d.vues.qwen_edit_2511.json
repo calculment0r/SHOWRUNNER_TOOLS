@@ -1,0 +1,49 @@
+{
+ "id": "objet3d.vues.qwen_edit_2511",
+ "label": "Les vues d'un objet · Qwen-Image-Edit 2511 + Multiple-Angles",
+ "intentions": [
+  "objet3d.creer"
+ ],
+ "outil": "objet",
+ "travail": "objet.vue",
+ "route": "POST /api/objet/{eid}/vues/generer",
+ "entrees": {
+  "objet": {
+   "sorte": "element",
+   "requis": true
+  }
+ },
+ "sortie": {
+  "sorte": "image",
+  "parents": [
+   "objet"
+  ]
+ },
+ "criteres": [],
+ "limites": [
+  "l'angle est dit en mots : la géométrie entre deux vues n'est pas garantie",
+  "chaque vue se garde par la personne (sa validation)"
+ ],
+ "etat": {
+  "exige": {
+   "interrupteur": "objet_vues=qwen-edit-2511"
+  }
+ },
+ "cout": {
+  "classe": "gpu",
+  "famille": "qwenedit",
+  "estimation": "durations.json"
+ },
+ "consentement": "rendu",
+ "licence": {
+  "nom": "Apache-2.0 (LoRA) ; Qwen-Image-Edit 2511 non relue",
+  "lue": false,
+  "source": "https://huggingface.co/fal/Qwen-Image-Edit-2511-Multiple-Angles-LoRA"
+ },
+ "sources": [
+  "docs/etudes/objet_scenes_3d.md § 10",
+  "server/tools/objet_vues.py"
+ ],
+ "rempli_par": "objet_scenes_3d.md",
+ "verifie": "2026-10-09"
+}

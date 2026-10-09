@@ -621,6 +621,10 @@ facultatif et sans rien casser :
   Multishot écrit la durée des plans autrement que le guide d'H3 cité par H3 Studio.
 - Le catalogue aligné sur le registre d'`agent_autonome.md` (branche `wip3/agent-etude`, commit `5b66756`, lu le
   09/10).
+- Le même jour, le lot 1 de l'agent (`agent_autonome.md`, « Fait le 09/10 — lot 1 ») a écrit le registre : les fiches
+  de LTX-2.5 Clean-Plate, du Person-Remover d'H3, de VOID et de l'inpainting d'H3 sont dans `agent/capacites/`
+  (installables : le travail `movie.retoucher` n'existe pas), avec les champs du § 3.3 ; les sept intentions du § 3.5
+  attendent la décision V12.
 
 ## Sources
 

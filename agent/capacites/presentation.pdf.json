@@ -1,0 +1,38 @@
+{
+ "id": "presentation.pdf",
+ "label": "Une présentation en PDF · Idéation",
+ "intentions": [
+  "slides.creer",
+  "slides.retoucher"
+ ],
+ "outil": "ideation",
+ "travail": "presentation.pdf",
+ "route": "POST /api/ideation/boards/{bid}/pdf",
+ "entrees": {},
+ "sortie": {
+  "sorte": "document"
+ },
+ "criteres": [],
+ "limites": [
+  "les diapositives d'une planche (le mode Présentation)"
+ ],
+ "etat": {
+  "exige": {
+   "pret": "presentation_pdf.state"
+  }
+ },
+ "cout": {
+  "classe": "cpu"
+ },
+ "consentement": "aucun",
+ "licence": {
+  "nom": "le code du portail",
+  "lue": true
+ },
+ "sources": [
+  "docs/etudes/presentations_motion.md",
+  "server/tools/presentation_pdf.py"
+ ],
+ "rempli_par": "agent_autonome.md",
+ "verifie": "2026-10-09"
+}

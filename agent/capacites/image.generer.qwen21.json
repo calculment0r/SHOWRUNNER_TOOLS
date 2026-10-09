@@ -1,0 +1,70 @@
+{
+ "id": "image.generer.qwen21",
+ "label": "Une image · Qwen-Image 2.1",
+ "intentions": [
+  "image.creer"
+ ],
+ "outil": "image",
+ "travail": "image.generate",
+ "route": "POST /api/image/generate",
+ "entrees": {
+  "texte": {
+   "type": "texte",
+   "requis": true
+  },
+  "references": {
+   "sorte": [
+    "image",
+    "element"
+   ],
+   "requis": false
+  }
+ },
+ "sortie": {
+  "sorte": "image"
+ },
+ "criteres": [
+  {
+   "si": "references",
+   "poids": 1,
+   "pourquoi": "il prend jusqu'à 10 références"
+  },
+  {
+   "si": "sans_reference",
+   "poids": 1,
+   "pourquoi": "il tire aussi une image du texte seul"
+  },
+  {
+   "si": "commercial",
+   "exclut": true,
+   "pourquoi": "sa licence est non commerciale"
+  }
+ ],
+ "limites": [
+  "licence non commerciale"
+ ],
+ "etat": {
+  "exige": {
+   "interrupteur": "image_backend=comfyui",
+   "image": "qwen21"
+  }
+ },
+ "cout": {
+  "classe": "gpu",
+  "famille": "qwen21",
+  "estimation": "durations.json"
+ },
+ "consentement": "rendu",
+ "licence": {
+  "nom": "Qwen Research License",
+  "lue": true,
+  "commercial": "non",
+  "source": "docs/etudes/image.md"
+ },
+ "sources": [
+  "docs/etudes/image.md",
+  "server/tools/image.py (MODELS)"
+ ],
+ "rempli_par": "agent_autonome.md",
+ "verifie": "2026-10-09"
+}

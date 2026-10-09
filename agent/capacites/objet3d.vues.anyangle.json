@@ -1,0 +1,58 @@
+{
+ "id": "objet3d.vues.anyangle",
+ "label": "Les vues d'un objet · AnyAngle (depuis un rendu du modèle 3D)",
+ "intentions": [
+  "objet3d.creer"
+ ],
+ "outil": "objet",
+ "travail": "objet.vue",
+ "route": "POST /api/objet/{eid}/vues/generer",
+ "entrees": {
+  "objet": {
+   "sorte": "element",
+   "requis": true
+  }
+ },
+ "sortie": {
+  "sorte": "image",
+  "parents": [
+   "objet"
+  ]
+ },
+ "criteres": [],
+ "limites": [
+  "aussi juste que le modèle 3D",
+  "chaque vue se garde par la personne (sa validation)"
+ ],
+ "etat": {
+  "exige": {
+   "interrupteur": "objet_vues=qwen21-anyangle"
+  }
+ },
+ "cout": {
+  "classe": "gpu",
+  "famille": "qwen21",
+  "estimation": "durations.json"
+ },
+ "consentement": "rendu",
+ "licence": {
+  "nom": "non écrite sur la carte (à lire)",
+  "lue": false,
+  "source": "https://huggingface.co/lilylilith/QI_2.1_AnyAngle"
+ },
+ "sources": [
+  "docs/etudes/objet_scenes_3d.md § 10",
+  "server/tools/objet_vues.py"
+ ],
+ "telechargements": [
+  {
+   "depot": "lilylilith/QI_2.1_AnyAngle",
+   "fichier": "QI2.1_AnyAngle.safetensors",
+   "dossier": "loras",
+   "go": 0.12,
+   "licence": "à lire"
+  }
+ ],
+ "rempli_par": "objet_scenes_3d.md",
+ "verifie": "2026-10-09"
+}

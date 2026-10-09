@@ -1,0 +1,42 @@
+{
+ "id": "document.lecture",
+ "label": "Lire le texte d'un document",
+ "intentions": [
+  "document.analyser"
+ ],
+ "outil": "ideation",
+ "travail": null,
+ "route": "GET /api/library/{id}/texte",
+ "entrees": {
+  "document": {
+   "sorte": "document",
+   "requis": true,
+   "question": {
+    "texte": "Quel document ?"
+   }
+  }
+ },
+ "sortie": {
+  "sorte": "reponse"
+ },
+ "criteres": [],
+ "limites": [
+  "un scan sans texte ne se lit que par sa couverture"
+ ],
+ "etat": {
+  "exige": {}
+ },
+ "cout": {
+  "classe": "none"
+ },
+ "consentement": "aucun",
+ "licence": {
+  "nom": "le code du portail",
+  "lue": true
+ },
+ "sources": [
+  "server/tools/documents.py"
+ ],
+ "rempli_par": "agent_autonome.md",
+ "verifie": "2026-10-09"
+}

@@ -8,7 +8,8 @@ Il répond comme ComfyUI à ce que la file lit (core/machines.py) :
 rendu d'un « autre » : le studio Character Factory, une autre session),
 `/free` (la mémoire revient), `/prompt` et `/history` (un rendu fini tout
 de suite, sans image). `/object_info/LoraLoaderModelOnly` liste ses LoRA
-(`loras`, réglable) ; un autre nœud : `{}` (inconnu). Il garde chaque graphe
+(`loras`, réglable), `/models/loras` aussi ; un autre nœud : `{}` (inconnu),
+un autre dossier : 404 ; `version` : la `comfyui_version` de `/system_stats`. Il garde chaque graphe
 reçu, pour qu'un essai vérifie ce que le portail a vraiment envoyé.
 Réglages en direct, depuis un essai :
 
@@ -39,6 +40,7 @@ class Faux:
         self.prompts: list[str] = []
         self.graphs: dict[str, dict] = {}   # prompt_id → le graphe reçu
         self.loras: list[str] = []
+        self.version = "faux"   # system.comfyui_version de /system_stats (le registre de l'agent la compare)
         self.lock = threading.Lock()
 
     def state(self) -> dict:
@@ -74,7 +76,12 @@ class Faux:
                 with faux.lock:
                     if self.path == "/system_stats":
                         return self._json({"system": {"os": "faux", "ram_total": int(faux.total * GB),
-                                                      "ram_free": int(faux.free * GB), "comfyui_version": "faux"}})
+                                                      "ram_free": int(faux.free * GB), "comfyui_version": faux.version}})
+                    if self.path.startswith("/models/"):   # ComfyUI server.py : les fichiers d'un dossier ; 404 pour un dossier inconnu
+                        folder = self.path.rsplit("/", 1)[1]
+                        if folder == "loras":
+                            return self._json(list(faux.loras))
+                        return self._json({"error": "dossier inconnu"}, 404)
                     if self.path == "/queue":
                         run = [[1, "faux-" + faux.client, {}, {"client_id": faux.client}, []]] if faux.busy else []
                         return self._json({"queue_running": run, "queue_pending": []})

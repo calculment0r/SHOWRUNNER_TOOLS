@@ -1,0 +1,58 @@
+{
+ "id": "image.detourer",
+ "label": "Détourer · Image (BiRefNet)",
+ "intentions": [
+  "image.modifier",
+  "vfx.incruster"
+ ],
+ "outil": "image",
+ "travail": "image.edit",
+ "route": "POST /api/image/edit",
+ "entrees": {
+  "image": {
+   "sorte": "image",
+   "requis": true,
+   "question": {
+    "texte": "Quelle image ?"
+   }
+  }
+ },
+ "sortie": {
+  "sorte": "image",
+  "parents": [
+   "image"
+  ]
+ },
+ "criteres": [
+  {
+   "si": "image_citee",
+   "poids": 1,
+   "pourquoi": "le sujet seul, sur fond transparent"
+  }
+ ],
+ "limites": [
+  "une image fixe ; pas de détourage vidéo"
+ ],
+ "etat": {
+  "exige": {
+   "interrupteur": "image_backend=comfyui",
+   "image": "matte"
+  }
+ },
+ "cout": {
+  "classe": "gpu",
+  "famille": "birefnet",
+  "estimation": "durations.json"
+ },
+ "consentement": "rendu",
+ "licence": {
+  "nom": "non relevée dans le dépôt",
+  "lue": false
+ },
+ "sources": [
+  "server/tools/image.py (EDIT_TOOLS)",
+  "docs/etudes/veille_1009.md § 2.2"
+ ],
+ "rempli_par": "agent_autonome.md",
+ "verifie": "2026-10-09"
+}

@@ -8,8 +8,8 @@
 //
 // Une planche neuve (deux images, une note, un document) ; le panneau par la touche I ; « Citer dans
 // la discussion » au clic droit ; « une image dans ce style » → la carte posée et branchée, un seul
-// pas d'annulation ; la ligne du geste montre la carte ; « Annuler ce tour », « Reposer » ; un tour de
-// gestes variés (le faux Ollama en script) défait d'un coup, la planche identique ; l'entrée d'un projet
+// pas d'annulation ; la ligne du geste montre la carte ; « Annuler ce tour », « Reposer » ; des tours de
+// gestes variés (le faux Ollama en script ; 3 gestes au plus par tour) défaits, la planche identique ; l'entrée d'un projet
 // par app.agent.send(texte, { pieces, intent: 'ingest' }) (06/10 : la réception, ce qui ne colle pas, des
 // questions cliquables, RIEN de posé ; une réponse → le plan ; accepté → une étape, un geste, défait d'un
 // coup ; le carnet) ; une note glissée sur le champ.
@@ -94,29 +94,32 @@ for (const theme of ['dark', 'light']) {
   await page.click('text=Reposer');
   await sleep(500);
   ok((await st()).n === 4, `${theme} : « Reposer » la remet`);
-  // un tour de gestes variés : défait d'un coup, la planche revient identique
+  // des tours de gestes variés (09/10 : chaque demande ne reçoit que les outils de son intention, 3 gestes au plus —
+  // docs/etudes/agent_autonome.md § 5.4, règle 9) : chacun défait d'un coup, la planche revient identique
   await page.click('text=Annuler ce tour');
   await sleep(300);
-  await fetch(`${faux}/_faux`, { method: 'POST', body: JSON.stringify({ script: [{ tool_calls: [
-    call('carte_video', { prompt: 'The camera pushes in.', image: P.i1, pourquoi: 'animer' }),
-    call('composeur', { style: 'A 1920s photograph.', decor: 'La Rotonde.', vers: 'new:0', pourquoi: 'le prompt' }),
-    call('relier', { de: 'n1', vers: 'n2', texte: 'même époque', pourquoi: 'ensemble' }),
-    call('renommer_planche', { nom: 'Kiki 1925', pourquoi: 'le sujet' }),
-    call('grouper', { ids: ['n1', 'n2'], nom: 'Références', pourquoi: 'ensemble' }),
-    call('poser_cadre', { nom: 'Notes', pourquoi: 'les notes' }),
-    call('deplacer', { ids: ['n3'], dans: 'new:3', pourquoi: 'la note' }),
-    call('poser_texte', { sorte: 'titre', texte: 'Kiki', dans: 'new:3', pourquoi: 'le titre' })] }, { content: 'Fait.' }] }) });
+  const script = (calls) => fetch(`${faux}/_faux`, { method: 'POST', body: JSON.stringify({ script: [{ tool_calls: calls }, { content: 'Fait.' }] }) });
   const before = await snap();
-  const r = await page.evaluate(async () => (await window.ideation.app.agent.send('fais tout')).results.filter((x) => x.ok).length);
+  await script([call('carte_video', { prompt: 'The camera pushes in.', image: P.i1, pourquoi: 'animer' }),
+    call('composeur', { style: 'A 1920s photograph.', decor: 'La Rotonde.', vers: 'new:0', pourquoi: 'le prompt' })]);
+  const rA = await page.evaluate(async () => (await window.ideation.app.agent.send('anime cette image')).results.filter((x) => x.ok).length);
+  await script([call('relier', { de: 'n1', vers: 'n2', texte: 'même époque', pourquoi: 'ensemble' }),
+    call('renommer_planche', { nom: 'Kiki 1925', pourquoi: 'le sujet' }), call('grouper', { ids: ['n1', 'n2'], nom: 'Références', pourquoi: 'ensemble' })]);
+  const rB = await page.evaluate(async () => (await window.ideation.app.agent.send('relie, renomme et groupe')).results.filter((x) => x.ok).length);
+  await script([call('poser_cadre', { nom: 'Notes', pourquoi: 'les notes' }), call('deplacer', { ids: ['n3'], dans: 'new:0', pourquoi: 'la note' }),
+    call('poser_texte', { sorte: 'titre', texte: 'Kiki', dans: 'new:0', pourquoi: 'le titre' })]);
+  const rC = await page.evaluate(async () => (await window.ideation.app.agent.send('range les notes dans un cadre')).results.filter((x) => x.ok).length);
   const inside = await page.evaluate(() => { const B = window.ideation.S.board; const f = B.nodes.find((n) => n.type === 'frame');
     return f ? B.nodes.filter((n) => n !== f && n.x >= f.x && n.y >= f.y && n.x + n.w <= f.x + f.w && n.y + n.h <= f.y + f.h).length : 0; });
-  ok(r === 8 && inside === 2, `${theme} : huit gestes posés, le cadre neuf à la taille de ce qu'il reçoit (${r}, ${inside} dedans)`);
+  ok(rA === 2 && rB === 3 && rC === 3 && inside === 2, `${theme} : huit gestes en trois tours, le cadre neuf à la taille de ce qu'il reçoit (${rA} ${rB} ${rC}, ${inside} dedans)`);
   await page.evaluate(() => window.ideation.app.canvas.fit());
   await sleep(500);
   await page.screenshot({ path: `${out}/${theme}-2-gestes.png` });
-  await page.click('.ag-turn:last-child >> text=Annuler ce tour');
-  await sleep(400);
-  ok(await snap() === before, `${theme} : « Annuler ce tour » rend la planche identique (nom, places, groupe, fils)`);
+  for (let k = 0; k < 3; k++) {   // du dernier au premier : le dernier tour encore posé
+    await page.locator('.ag-turn', { has: page.locator('button:text-is("Annuler ce tour")') }).last().locator('button:text-is("Annuler ce tour")').click();
+    await sleep(400);
+  }
+  ok(await snap() === before, `${theme} : « Annuler ce tour » sur chacun rend la planche identique (nom, places, groupe, fils)`);
   // le contrat de « Commencer un projet » (06/10) : la réception, des questions, rien de posé
   const nIng = (await st()).n;
   const ing = await page.evaluate(async (p) => {
