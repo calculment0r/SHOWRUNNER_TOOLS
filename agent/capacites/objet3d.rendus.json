@@ -1,0 +1,46 @@
+{
+ "id": "objet3d.rendus",
+ "label": "Les rendus du modèle 3D · Object Creator (RenderMesh)",
+ "intentions": [
+  "objet3d.creer"
+ ],
+ "outil": "objet",
+ "travail": "objet.rendus",
+ "route": "POST /api/objet/{eid}/rendus",
+ "entrees": {
+  "objet": {
+   "sorte": "element",
+   "requis": true
+  }
+ },
+ "sortie": {
+  "sorte": "image",
+  "parents": [
+   "objet"
+  ]
+ },
+ "criteres": [],
+ "limites": [
+  "les images du modèle 3D, pour une sheet"
+ ],
+ "etat": {
+  "exige": {
+   "interrupteur": "objet_rendus=true"
+  }
+ },
+ "cout": {
+  "classe": "gpu",
+  "estimation": "durations.json"
+ },
+ "consentement": "rendu",
+ "licence": {
+  "nom": "le code du portail",
+  "lue": true
+ },
+ "sources": [
+  "docs/etudes/objet_scenes_3d.md",
+  "server/tools/objet_vues.py"
+ ],
+ "rempli_par": "objet_scenes_3d.md",
+ "verifie": "2026-10-09"
+}

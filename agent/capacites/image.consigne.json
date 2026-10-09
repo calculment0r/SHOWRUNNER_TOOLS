@@ -1,0 +1,65 @@
+{
+ "id": "image.consigne",
+ "label": "Changer une image · Image, Consigne",
+ "intentions": [
+  "image.modifier",
+  "vfx.retirer"
+ ],
+ "outil": "image",
+ "travail": "image.edit",
+ "route": "POST /api/image/edit",
+ "entrees": {
+  "image": {
+   "sorte": "image",
+   "requis": true,
+   "question": {
+    "texte": "Quelle image ?"
+   }
+  },
+  "consigne": {
+   "type": "texte",
+   "requis": true
+  }
+ },
+ "sortie": {
+  "sorte": "image",
+  "parents": [
+   "image"
+  ]
+ },
+ "criteres": [
+  {
+   "si": "image_citee",
+   "poids": 2,
+   "pourquoi": "une image citée : la Consigne la change, une zone peinte la borne"
+  }
+ ],
+ "limites": [
+  "une image fixe (la première image d'un plan, par exemple)",
+  "Qwen-Image 2.1 : non commercial"
+ ],
+ "etat": {
+  "exige": {
+   "interrupteur": "image_backend=comfyui",
+   "image": "qwen21"
+  }
+ },
+ "cout": {
+  "classe": "gpu",
+  "famille": "qwen21",
+  "estimation": "durations.json"
+ },
+ "consentement": "rendu",
+ "licence": {
+  "nom": "Qwen Research License (Qwen 2.1) ; Krea 2 Community License",
+  "lue": true,
+  "commercial": "non pour Qwen 2.1",
+  "source": "docs/etudes/image.md"
+ },
+ "sources": [
+  "server/tools/image.py (EDIT_TOOLS)",
+  "docs/etudes/agent_autonome.md § 3.3"
+ ],
+ "rempli_par": "agent_autonome.md",
+ "verifie": "2026-10-09"
+}

@@ -1,0 +1,49 @@
+{
+ "id": "video.agrandir",
+ "label": "Agrandir une vidéo · Upscale",
+ "intentions": [
+  "video.creer"
+ ],
+ "outil": "upscale",
+ "travail": "upscale.video",
+ "route": "POST /api/upscale/run",
+ "entrees": {
+  "video": {
+   "sorte": "video",
+   "requis": true
+  }
+ },
+ "sortie": {
+  "sorte": "video",
+  "parents": [
+   "video"
+  ]
+ },
+ "criteres": [
+  {
+   "si": "video_citee",
+   "poids": 2,
+   "pourquoi": "une vidéo citée : SeedVR2 l'agrandit"
+  }
+ ],
+ "limites": [],
+ "etat": {
+  "exige": {
+   "interrupteur": "upscale_backend=comfyui"
+  }
+ },
+ "cout": {
+  "classe": "gpu",
+  "estimation": "durations.json"
+ },
+ "consentement": "rendu",
+ "licence": {
+  "nom": "non relevée dans le dépôt",
+  "lue": false
+ },
+ "sources": [
+  "docs/etudes/upscale.md"
+ ],
+ "rempli_par": "agent_autonome.md",
+ "verifie": "2026-10-09"
+}

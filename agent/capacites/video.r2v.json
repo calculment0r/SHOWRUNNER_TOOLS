@@ -1,0 +1,76 @@
+{
+ "id": "video.r2v",
+ "label": "Références → vidéo · H3",
+ "intentions": [
+  "video.creer"
+ ],
+ "outil": "movie",
+ "travail": "movie.r2v",
+ "route": null,
+ "entrees": {
+  "references": {
+   "sorte": [
+    "image",
+    "element",
+    "video",
+    "audio"
+   ],
+   "requis": true
+  },
+  "texte": {
+   "type": "texte",
+   "requis": true
+  }
+ },
+ "sortie": {
+  "sorte": "video"
+ },
+ "criteres": [
+  {
+   "si": "element_cite",
+   "poids": 3,
+   "pourquoi": "des personnages (éléments) : H3 Références"
+  },
+  {
+   "si": "plusieurs_references",
+   "poids": 3,
+   "pourquoi": "plusieurs références : H3 Références (9 images, 3 vidéos, 3 sons)"
+  },
+  {
+   "si": "commercial_ue",
+   "exclut": true,
+   "pourquoi": "la licence d'H3 exclurait l'UE (non lue : veille_1009.md § 2.1)"
+  }
+ ],
+ "limites": [
+  "un rendu de 7 à 15 min sur une DGX (H3)"
+ ],
+ "etat": {
+  "exige": {
+   "interrupteur": "movie_engine=h3"
+  }
+ },
+ "cout": {
+  "classe": "gpu",
+  "famille": "h3",
+  "estimation": "durations.json"
+ },
+ "consentement": "rendu",
+ "licence": {
+  "nom": "MiniMax H3 Community License",
+  "lue": false,
+  "territoire": [
+   "UE",
+   "US",
+   "UK",
+   "KR"
+  ],
+  "source": "docs/etudes/veille_1009.md § 2.1 (extraits) ; REPRISE § 2.D : « H3 non licencié dans l'UE »"
+ },
+ "sources": [
+  "docs/etudes/movie.md",
+  "server/tools/movie.py"
+ ],
+ "rempli_par": "agent_autonome.md",
+ "verifie": "2026-10-09"
+}

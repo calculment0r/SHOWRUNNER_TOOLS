@@ -161,8 +161,9 @@ def _inputs_of(pl: dict, params: dict) -> list[dict]:
                       "style": "visual style", "object": "object"}.get(s["role"], s["role"])
             if s["kind"] == "element" and s.get("etype") == "object":
                 what = "object"
-            el = library.get(s["item"]) or {}
-            desc = ((el.get("element") or {}).get("description") or "") if s["kind"] == "element" else ""
+            # la description résolue par movie._inputs (la dernière version d'un élément versionné), ou celle que la
+            # personne a déjà mise en anglais (`subjects`)
+            desc = s.get("description") or ""
             out.append({"token": "@" + s["token"], "kind": s["kind"], "what": what, "title": s["title"],
                         "description": " ".join(desc.split())[:900]})
         for v in R["videos"]:

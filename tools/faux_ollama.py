@@ -10,8 +10,13 @@ le diagnostic tools/diag_agent.py : `parameters`, `details`, `model_info`), `POS
 
   - avec `format` (un schéma JSON) : un objet conforme au schéma, rempli d'après le texte
     reçu — l'entrée d'un projet (ce qu'il comprend, ce qui ne colle pas : un brief sans un mot
-    en commun avec les documents est signalé, des questions à choix), le plan, un palier
-    (les images regardées) ;
+    en commun avec les documents est signalé, 0 à 3 questions à choix), le plan, un palier
+    (les images regardées), le ROUTEUR de l'agent (09/10 : une intention de l'enum du schéma,
+    choisie par mots-clés dans `<request>`, et les entrées que la demande dit — la source citée,
+    la séquence, le nombre de plans, le format, le rendu), le DÉCOUPAGE d'un storyboard (un plan
+    par ligne d'action de `<scope>`, dans les bornes du schéma : son nombre de plans, ses enums),
+    l'invite d'H3 mise en forme (server/tools/movie_invite.py : des plans en anglais qui citent
+    chaque entrée, des répliques dans la langue demandée) ;
   - avec `tools` : des appels d'outils SCÉNARISÉS, au format d'Ollama
     (`message.tool_calls: [{"function": {"name", "arguments": {…}}}]`), choisis d'après la
     demande (`<request>`) et les objets cités (`<cited>`) du dernier message de la personne,
@@ -102,7 +107,10 @@ class Faux:
         m = {"role": "assistant", "content": content or ""}
         if calls:
             m["tool_calls"] = calls
-        return {"model": "faux", "message": m, "done": True, "done_reason": "stop", "prompt_eval_count": 1200, "eval_count": 40}
+        # les temps que rend Ollama (docs/api.md, en nanosecondes) : des valeurs d'essai, pour que la page et le banc les lisent
+        return {"model": "faux", "message": m, "done": True, "done_reason": "stop", "prompt_eval_count": 1200, "eval_count": 40,
+                "load_duration": 250_000_000, "prompt_eval_duration": 400_000_000, "eval_duration": 300_000_000,
+                "total_duration": 980_000_000}
 
     def structured(self, schema: dict, msgs: list) -> dict:
         text = (msgs[-1].get("content") if msgs else "") or ""
@@ -113,6 +121,10 @@ class Faux:
             return self.plan(text)
         if "annonce" in props:
             return self.palier(msgs[-1] if msgs else {})
+        if "intention" in props:
+            return self.routeur(text, schema)
+        if "plans" in props and "remarques" in props:
+            return self.decoupage(text, schema)
         if "shots" in props and "subjects" in props:
             return self.invite(text)
         body = _block(text, "document") or re.sub(r"<[^>]+>", " ", text)
@@ -159,7 +171,7 @@ class Faux:
 
     def entree(self, text: str) -> dict:
         """L'entrée : ce qu'il comprend (le brief, les titres), la contradiction quand le brief n'a pas un mot
-        de six lettres en commun avec le début des documents, puis 3 ou 4 questions à choix."""
+        de six lettres en commun avec le début des documents, puis 3 questions à choix au plus (0 à 3 : le schéma)."""
         brief = _block(text, "brief").strip()
         docs = re.findall(r'<document n="\d+" id="[^"]*" title="([^"]*)"[^>]*>\n?(.*?)</document>', _block(text, "documents"), re.S)
         titres = [t for t, _ in docs]
@@ -178,7 +190,7 @@ class Faux:
             qs.append({"question": "Quels documents comptent ?", "choix": titres[:5], "plusieurs": True})
         while len(qs) < 3:
             qs.append({"question": "Pour qui ?", "choix": ["Le grand public", "Des professionnels"], "plusieurs": False})
-        return {"comprehension": comp, "contradictions": contra, "questions": qs[:5]}
+        return {"comprehension": comp, "contradictions": contra, "questions": qs[:3]}
 
     def plan(self, text: str) -> dict:
         ans = _block(text, "answers")
@@ -200,6 +212,77 @@ class Faux:
         return {"annonce": f"{f'Les {n} images regardées' if n > 1 else 'L’image regardée'} (faux Ollama) : des aplats de couleur, sans rapport net avec le brief.",
                 "pieces": [{"n": int(k), "ce_que_c_est": f"{'trois images d’une vidéo' if 'video' in kind else 'un aplat'} « {t} »"} for k, kind, t in noms],
                 "questions": [{"question": "Ces images servent-elles de références ?", "choix": ["Oui, toutes", "Non, on les écarte"], "plusieurs": False}]}
+
+    # le routeur : des mots-clés, dans l'ordre (le premier qui va gagne) → une intention de l'enum du schéma
+    ROUTES = ((r"storyboard|d[ée]coup", "storyboard.creer"), (r"sais-tu faire|tu sais faire|capacit", "aide.capacites"),
+              (r"instagram|publie|envoie", "autre"), (r"enl[èe]ve|retire |efface", "vfx.retirer"), (r"incruste", "vfx.incruster"),
+              (r"pr[ée]sentation|slides|deck", "slides.creer"), (r"musique|chanson", "musique.creer"),
+              (r"[ée]carte|d[ée]cide", "planche.retoucher"), (r"style|m[êe]me|comme celle|une image|affiche", "image.creer"),
+              (r"vid[ée]o|anime", "video.creer"), (r"\blis\b|r[ée]sume", "document.analyser"),
+              (r"range|renomme|groupe|d[ée]place|relie|cadre|fais tout", "planche.retoucher"), (r"cherche|retrouve|pose", "asset.chercher"))
+
+    def routeur(self, text: str, schema: dict) -> dict:
+        req = _block(text, "request").lower()
+        ids = schema["properties"]["intention"]["enum"]
+        intent = next((i for rx, i in self.ROUTES if re.search(rx, req) and i in ids), "planche.question" if "planche.question" in ids else ids[0])
+        props = ((schema["properties"].get("entrees") or {}).get("properties")) or {}
+        e: dict = {}
+        if intent == "storyboard.creer":
+            src = (props.get("source") or {}).get("enum") or []
+            cited = [x for x in src if x not in ("demande", "brief")]
+            if cited:
+                e["source"] = cited[0]
+            elif len(req) > 160 and "demande" in src:
+                e["source"] = "demande"
+            m = re.search(r"((?:s[ée]quence|sc[èe]ne)\s+\d+)", req)
+            if m:
+                e["portee"] = m.group(1)
+            m = re.search(r"(\d+)\s*(?:plans|cases)", req)
+            if m:
+                e["plans"] = max(1, min(24, int(m.group(1))))
+            m = re.search(r"(16:9|9:16|1:1|2\.39:1)", req)
+            if m:
+                e["format"] = m.group(1)
+            if "crayon" in req:
+                e["rendu"] = "crayonne"
+            elif "photo" in req:
+                e["rendu"] = "photoreal"
+        e = {k: v for k, v in e.items() if k in props}
+        return {"intention": intent, "clarte": "precise", "entrees": e, "cible": [], "resume": req[:80]}
+
+    VALEURS = ("plan_ensemble", "plan_americain", "gros_plan", "plan_rapproche", "insert", "plan_moyen")
+    MOUVS = ("fixe", "travelling", "panoramique", "fixe", "zoom", "camera_epaule")
+
+    def decoupage(self, text: str, schema: dict) -> dict:
+        """Un plan par ligne d'action de la portée (un en-tête, un nom de personnage seul en capitales ne sont pas des plans ;
+        la réplique qui suit un nom va au plan d'avant) ; le nombre de plans du schéma s'il est fixé."""
+        m = re.search(r'<scope title="([^"]*)">\n?(.*?)\n?</scope>', text, re.S)
+        titre, scope = (m.group(1), m.group(2)) if m else ("", "")
+        persos = re.findall(r"^- ([^:\n]+)", _block(text, "characters"), re.M)
+        plans, who = [], ""
+        for ln in [x.strip() for x in scope.splitlines() if x.strip()]:
+            if re.match(r"^(INT|EXT|EST|I/E|S[ÉE]Q|SC[ÈE]NE)\b|^\.", ln, re.I) or ln.startswith("Title:"):
+                continue
+            if ln.isupper() and len(ln) < 40:
+                who = ln.title()
+                continue
+            if who and plans:
+                plans[-1]["dialogue"] = ln[:300]
+                who = ""
+                continue
+            k = len(plans)
+            plans.append({"valeur": self.VALEURS[k % 6], "angle": "normal", "mouvement": self.MOUVS[k % 6], "duree_s": 2.0 + k % 3,
+                          "action": ln[:300], "dialogue": "", "son": "",
+                          "personnages": [p for p in persos if p.lower() in ln.lower()][:4],
+                          "prompt": f"Shot {k + 1} of the scene, {self.VALEURS[k % 6].replace('_', ' ')}: {ln[:400]}"})
+        sp = schema["properties"]["plans"]
+        lo, hi = int(sp.get("minItems") or 1), int(sp.get("maxItems") or 24)
+        if not plans:
+            plans = [{"valeur": "plan_ensemble", "angle": "normal", "mouvement": "fixe", "duree_s": 3.0, "action": "Le lieu, vide.",
+                      "dialogue": "", "son": "", "personnages": [], "prompt": "Establishing shot of the place."}]
+        while len(plans) < lo:
+            plans.append({**plans[-1], "valeur": "insert", "action": plans[-1]["action"][:280] + " (suite)"})
+        return {"titre": f"Découpage · {titre}"[:120], "plans": plans[:hi], "remarques": ["Faux Ollama : un plan par ligne d'action."]}
 
     def scenario(self, msgs: list) -> tuple[str, list | None]:
         """Les scénarios : la demande (`<request>`) choisit, l'étape avance d'une réponse à l'autre."""

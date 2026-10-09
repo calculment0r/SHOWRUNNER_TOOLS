@@ -1,0 +1,57 @@
+{
+ "id": "transcrire",
+ "label": "Transcrire un son, une vidéo · Transcrire",
+ "intentions": [
+  "media.analyser"
+ ],
+ "outil": "transcrire",
+ "travail": "transcrire.transcribe",
+ "route": "POST /api/transcrire/run",
+ "entrees": {
+  "son": {
+   "sorte": [
+    "audio",
+    "video"
+   ],
+   "requis": true
+  }
+ },
+ "sortie": {
+  "sorte": "document"
+ },
+ "criteres": [
+  {
+   "si": "son_cite",
+   "poids": 2,
+   "pourquoi": "un son cité : le texte calé"
+  },
+  {
+   "si": "video_citee",
+   "poids": 1,
+   "pourquoi": "la piste son d'une vidéo"
+  }
+ ],
+ "limites": [
+  "les voix (qui parle) par le service de DGX1"
+ ],
+ "etat": {
+  "exige": {
+   "interrupteur": "transcrire_moteur=local"
+  }
+ },
+ "cout": {
+  "classe": "gpu",
+  "estimation": "durations.json"
+ },
+ "consentement": "rendu",
+ "licence": {
+  "nom": "MIT (Whisper)",
+  "lue": true,
+  "source": "docs/etudes/transcrire.md § 2"
+ },
+ "sources": [
+  "docs/etudes/transcrire.md"
+ ],
+ "rempli_par": "agent_autonome.md",
+ "verifie": "2026-10-09"
+}

@@ -1,0 +1,102 @@
+{
+ "id": "vfx.retirer_personne.h3",
+ "label": "Retirer une personne · H3 Person Remover",
+ "intentions": [
+  "vfx.retirer"
+ ],
+ "outil": "movie",
+ "travail": "movie.retoucher",
+ "route": null,
+ "entrees": {
+  "video": {
+   "sorte": "video",
+   "requis": true,
+   "contraintes": {
+    "cote_multiple": 32,
+    "fps": 24
+   }
+  },
+  "premiere": {
+   "sorte": "image",
+   "requis": true,
+   "prepare_par": "image.consigne"
+  },
+  "qui": {
+   "type": "texte",
+   "requis": true,
+   "question": {
+    "texte": "Qui retirer ?"
+   }
+  }
+ },
+ "sortie": {
+  "sorte": "video",
+  "parents": [
+   "video"
+  ]
+ },
+ "criteres": [
+  {
+   "si": "une_personne_parmi_plusieurs",
+   "poids": 1,
+   "pourquoi": "il suit la personne désignée (SAM 3.1)"
+  },
+  {
+   "si": "objet_immobile",
+   "poids": -1,
+   "pourquoi": "il retire une personne, pas un objet"
+  },
+  {
+   "si": "commercial_ue",
+   "exclut": true,
+   "pourquoi": "la licence d'H3 exclurait l'UE (non lue : veille_1009.md § 2.1)"
+  }
+ ],
+ "limites": [
+  "un plan continu de ≈ 5 s ; les coupes cassent",
+  "« experimental »",
+  "il demande la première image déjà nettoyée"
+ ],
+ "etat": {
+  "exige": {
+   "comfy_modeles": [
+    "loras/H3-Person-Remover-V1.safetensors"
+   ],
+   "noeuds": [
+    "SAM3_VideoTrack"
+   ]
+  }
+ },
+ "cout": {
+  "classe": "gpu",
+  "famille": "h3",
+  "estimation": "durations.json"
+ },
+ "consentement": "rendu",
+ "licence": {
+  "nom": "MiniMax H3 Community License",
+  "lue": false,
+  "territoire": [
+   "UE",
+   "US",
+   "UK",
+   "KR"
+  ],
+  "source": "docs/etudes/veille_1009.md § 2.1 (extraits) ; REPRISE § 2.D : « H3 non licencié dans l'UE »"
+ },
+ "sources": [
+  "https://huggingface.co/akatz-ai/MiniMax-H3-Person-Remover-LoRA",
+  "docs/etudes/veille_1009.md § 2.1"
+ ],
+ "telechargements": [
+  {
+   "depot": "akatz-ai/MiniMax-H3-Person-Remover-LoRA",
+   "fichier": "H3-Person-Remover-V1.safetensors",
+   "dossier": "loras",
+   "go": null,
+   "licence": "MiniMax H3 (non lue)"
+  }
+ ],
+ "rempli_par": "veille_1009.md",
+ "verifie": "2026-10-09"
+}

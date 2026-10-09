@@ -1,0 +1,32 @@
+{
+ "id": "slides.pptx",
+ "label": "Une présentation en PPTX éditable",
+ "intentions": [
+  "slides.creer"
+ ],
+ "outil": "ideation",
+ "travail": "presentation.pptx",
+ "route": null,
+ "entrees": {},
+ "sortie": {
+  "sorte": "document"
+ },
+ "criteres": [],
+ "limites": [
+  "aucun export PPTX dans le portail ; aucune voie locale documentée ici"
+ ],
+ "etat": {
+  "exige": {}
+ },
+ "cout": {
+  "classe": "cpu"
+ },
+ "consentement": "aucun",
+ "licence": {
+  "nom": "aucune voie : pas de licence",
+  "lue": false
+ },
+ "sources": [],
+ "rempli_par": "veille_1009.md",
+ "verifie": "2026-10-09"
+}
