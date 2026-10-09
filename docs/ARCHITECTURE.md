@@ -785,7 +785,7 @@ objet (la sorte `subtitle` manque : Transcrire l'exporte).
 
 | Routes (`server/tools/tableau.py`) | |
 |---|---|
-| `GET /api/tableau[?toutes=1]` | les Teams que la personne voit (Cal, `toutes` : toutes, les « Chez moi » de chacun comprises, et `orphans` : ce qui reste d'un Workspace qui n'existe plus) → par Team, par Workspace : `total`, `counts` (par sorte), `authors` (par auteur), `last` (la dernière activité) ; `people` (qui a créé combien, où, quand pour la dernière fois) ; `kinds` |
+| `GET /api/tableau[?toutes=1]` | les Teams que la personne voit (Cal, `toutes` : toutes, les Teams personnelles de chacun comprises, et `orphans` : ce qui reste d'un Workspace qui n'existe plus) → par Team, par Workspace : `total`, `counts` (par sorte), `authors` (par auteur), `last` (la dernière activité) ; `people` (qui a créé combien, où, quand pour la dernière fois) ; `kinds` |
 | `GET /api/tableau/espace/<sid>?kind=a,b&q=&author=&limit=&offset=` | les objets d'un Workspace, du plus récent : sorte, titre, auteur (`via`), dates, `open` (avec `?e=<sid>`), vignette ; 404 d'un Workspace qu'on ne voit pas, comme d'un Workspace qui n'existe pas |
 | `GET /api/tableau/personne/<uid>?kind=&limit=&offset=` | tout ce que cette personne a créé, partout, avec son Workspace et sa Team (`spaces` : où, combien, quand) — Cal, ou soi-même (403) ; `inconnu` : ce dont on ne sait pas l'auteur |
 | `GET /api/tableau/cherche?q=&toutes=1` | les personnes (nom, pseudo) et les objets (titre, nom de l'auteur) qui répondent à `q`, sans casse ni accents ; Cal : tous les comptes |

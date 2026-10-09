@@ -5,7 +5,7 @@
 //
 // Ce que la page montre vient de GET /api/tableau (server/tools/tableau.py), qui compte les
 // fiches de l'inventaire (core/inventaire.py : chaque outil y énumère ses créations, avec leur
-// auteur et leur Workspace) : Cal voit toutes les Teams (?toutes=1, les « Chez moi » de chacun
+// auteur et leur Workspace) : Cal voit toutes les Teams (?toutes=1, les Teams personnelles de chacun
 // comprises) ; un autre compte, ses Teams. Les accès (membres, rôles, invitations, Workspaces)
 // se gèrent dans la section Teams, juste après : ce tableau n'écrit rien.
 //
@@ -226,7 +226,7 @@ function overviewView() {
     el('span', { class: 'lbl' }, `les teams · ${d.teams.length}`),
     el('div', { class: 'grid2 wide' }, ...full.map(tdbTeam),
       d.orphans ? tdbTeam({ id: 'hors', name: 'Hors des Teams', total: d.orphans.total, last: d.orphans.last, spaces: d.orphans.spaces }) : null),
-    empty.length ? el('p', { class: 'adm-note tdb-empty' }, `${nb(empty.length, '« chez moi » sans rien', '« chez moi » sans rien')} : `,
+    empty.length ? el('p', { class: 'adm-note tdb-empty' }, `${nb(empty.length, 'Team personnelle vide', 'Teams personnelles vides')} : `,
       empty.map((t) => t.name).join(' · ')) : null];
 }
 
@@ -238,7 +238,7 @@ export function tableauSec() {
   const me = d && d.people.find((p) => p.id === d.me?.id);
   headBox.replaceChildren(ctx.head(titre(), '0', d ? `${nb(d.total, 'objet', 'objets')} · ${nb(d.people.filter((p) => !p.unknown).length, 'personne', 'personnes')}` : null),
     el('p', { class: 'adm-note' }, ctx.isCal()
-      ? 'Ce que chacun a créé, et où : chaque Team (les « Chez moi » de chacun comprises), chaque Workspace, qui y crée et quand pour la dernière fois. Tu entres partout, en lecture : un objet s’ouvre dans son outil, dans un nouvel onglet placé dans son Workspace. Les accès se règlent dans Teams.'
+      ? 'Ce que chacun a créé, et où : chaque Team (les Teams personnelles de chacun comprises), chaque Workspace, qui y crée et quand pour la dernière fois. Tu entres partout, en lecture : un objet s’ouvre dans son outil, dans un nouvel onglet placé dans son Workspace. Les accès se règlent dans Teams.'
       : 'Ce qui a été créé dans tes Teams, et par qui. Un objet s’ouvre dans son outil, dans un nouvel onglet placé dans son Workspace. Les accès — membres, rôles, invitations, Workspaces — se gèrent dans la section Teams.'),
     el('div', { class: 'row' },
       d && !ctx.isCal() ? el('button', { class: 'tb ghost sm', type: 'button', onclick: () => openPerson(d.me.id) }, `Ce que j’ai créé · ${me ? me.total : 0}`) : null,

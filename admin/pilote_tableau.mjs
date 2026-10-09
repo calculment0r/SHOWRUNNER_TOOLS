@@ -7,8 +7,8 @@
 //
 // Le parcours : Cal crée deux Teams (« Studio Nord » : Général et Clip ; « Atelier Sud »), y met trois
 // personnes d'essai ; chacune crée (une image, un son, sa transcription, une planche, un projet ODIO) —
-// l'une dans son « Chez moi » seulement, le cas de Cal du 09/10 (une transcription lancée par un ami,
-// introuvable). Puis : la vue d'ensemble de Cal (les Teams, les « Chez moi », les personnes ; un
+// l'une dans sa Team personnelle seulement, le cas de Cal du 09/10 (une transcription lancée par un ami,
+// introuvable). Puis : la vue d'ensemble de Cal (les Teams, les Teams personnelles, les personnes ; un
 // Workspace déplié ; la recherche d'un nom ; tout ce que cette personne a créé, et où ; un objet
 // s'ouvre dans son outil, dans son Workspace) ; le tableau de bord d'un membre (ses Teams seulement,
 // la section Teams juste après ; l'entrée « Tableau de bord » du menu du compte). Captures en sombre
@@ -100,14 +100,19 @@ const mTrn = await transcrire(mia, mSon.j?.id, W1);
 ok(mImg.s === 200 && mSon.s === 200 && mTrn?.state === 'done', `Mia crée dans Studio Nord / Général : une image, un son, sa transcription (${mImg.s} ${mSon.s} ${mTrn?.state})`);
 await mia.call('POST', 'music/projects', { name: 'Maquette refrain' }, { esp: W2 });
 
-// Tao : dans son « Chez moi » seulement — ce que Cal ne trouvait pas
+// Tao : dans sa Team personnelle seulement — ce que Cal ne trouvait pas. Son nom et celui de son Workspace
+// viennent du socle (core/espaces.py : ils changent avec les Teams v2), pas du pilote
 const tao = await who('Tao Essai');
-const taoId = (await tao.call('GET', 'auth/me')).j?.user?.id;
+const taoMe = (await tao.call('GET', 'auth/me')).j || {};
+const taoId = taoMe.user?.id;
 const P = `esp-perso-${taoId}`;
+const taoTeam = (taoMe.teams || []).find((t) => t.personal) || {};
+const taoTeamFor = (viewer) => (viewer === taoId ? taoTeam.name : `${taoTeam.name} · Tao Essai`);   // tableau.py, _View.team_name
+const taoSpace = ((taoTeam.spaces || []).find((s) => s.id === P) || {}).name || '?';
 const tSon = await upload(tao, wav, 'notes.wav', 'Notes vocales', P, 'audio/wav');
 const tTrn = await transcrire(tao, tSon.j?.id, P);
 ok(tTrn?.state === 'done' && tTrn.space === P && tTrn.owner === taoId,
-  `Tao transcrit dans son Perso : le document porte son auteur et son Workspace (${tTrn?.state} ${tTrn?.space} ${tTrn?.owner})`);
+  `Tao transcrit dans sa Team personnelle : le document porte son auteur et son Workspace (${tTrn?.state} ${tTrn?.space} ${tTrn?.owner})`);
 
 const lou = await who('Lou Essai');
 await lou.call('POST', 'ideation/boards', { name: 'Story Sud' }, { esp: W3 });
@@ -123,8 +128,8 @@ for (const theme of ['dark', 'light']) {
     await p.waitForSelector('.tdb-team', { timeout: 15000 });
     const txt = await p.innerText('#adm-main');
     if (theme === 'dark' && width === 1280) {
-      ok(/STUDIO NORD/i.test(txt) && /ATELIER SUD/i.test(txt) && /CHEZ TAO ESSAI/i.test(txt),
-        'Cal voit toutes les Teams, les « Chez moi » de chacun compris');
+      ok(/STUDIO NORD/i.test(txt) && /ATELIER SUD/i.test(txt) && txt.toUpperCase().includes(taoTeamFor('cal').toUpperCase()),
+        `Cal voit toutes les Teams, les Teams personnelles de chacun comprises (« ${taoTeamFor('cal')} »)`);
       ok((await p.$$eval('.tdb-pp', (xs) => xs.map((x) => x.dataset.person))).includes(taoId), 'Cal voit Tao dans les personnes');
       ok((await p.getAttribute('html', 'data-theme')) === 'dark', 'le thème sombre est posé');
     }
@@ -149,17 +154,30 @@ for (const theme of ['dark', 'light']) {
     await p.waitForSelector('.tdb-person .tdb-it', { timeout: 10000 });
     const ptxt = await p.innerText('.tdb-person');
     if (theme === 'dark' && width === 1280) {
-      ok(/Notes vocales/.test(ptxt) && /Perso/.test(ptxt), 'la recherche « tao » mène à sa transcription, dans son Perso');
+      ok(/Notes vocales/.test(ptxt) && ptxt.includes(`${taoTeamFor('cal')} / ${taoSpace}`), `la recherche « tao » mène à sa transcription, dans « ${taoTeamFor('cal')} / ${taoSpace} »`);
       ok(!/\[object|undefined|NaN/.test(ptxt), 'la fiche de Tao se lit (ni [object…], ni undefined)');
       const href = await p.getAttribute('.tdb-person .tdb-it[data-kind="transcription"]', 'href');
-      ok(href && href.includes(`transcrire/?e=${P}#`), `la transcription s'ouvre dans Transcrire, dans le Perso de Tao (${href})`);
+      ok(href && href.includes(`transcrire/?e=${P}#`), `la transcription s'ouvre dans Transcrire, dans le Workspace de Tao (${href})`);
       // l'ouvrir : un nouvel onglet, dans son Workspace, le document ouvert
       const [tab] = await Promise.all([c.ctx.waitForEvent('page'), p.click('.tdb-person .tdb-it[data-kind="transcription"]')]);
       await tab.waitForLoadState('domcontentloaded');
-      await tab.waitForTimeout(2500);
-      ok(new URL(tab.url()).searchParams.get('e') === P, `l'onglet ouvert est dans le Perso de Tao (${tab.url()})`);
+      const lu = await tab.waitForFunction(() => /notes vocales/i.test(document.body.innerText), null, { timeout: 15000 }).then(() => true, () => false);
+      await tab.waitForTimeout(500);
+      ok(lu && new URL(tab.url()).searchParams.get('e') === P,
+        `l'onglet ouvert est dans le Workspace de Tao, la transcription ouverte (${tab.url()})`);
       await tab.screenshot({ path: `${out}/${tag}-transcription-ouverte.png` });
       await tab.close();
+      // un média s'ouvre dans sa fiche d'Asset, dans son Workspace (Asset ne montre à Cal que ses Teams : ?e= l'y ajoute)
+      const [fiche] = await Promise.all([c.ctx.waitForEvent('page'), p.click('.tdb-person .tdb-it[data-kind="audio"]')]);
+      await fiche.waitForLoadState('domcontentloaded');
+      // le titre d'une fiche est un champ (on le renomme sur place) : sa valeur, pas son texte
+      const vu = await fiche.waitForFunction(() => [...document.querySelectorAll('input, textarea')].some((x) => /notes vocales/i.test(x.value)),
+        null, { timeout: 15000 }).then(() => true, () => false);
+      const fu = new URL(fiche.url());
+      ok(vu && fu.pathname.endsWith('/asset/') && fu.searchParams.get('e') === P && /^#aud-/.test(fu.hash),
+        `le son de Tao s'ouvre dans sa fiche d'Asset, dans son Workspace (${fiche.url()})`);
+      await fiche.screenshot({ path: `${out}/${tag}-asset-ouvert.png` });
+      await fiche.close();
     }
     await shot(p, `${tag}-personne`, width < 600);
     await c.ctx.close();
@@ -176,8 +194,8 @@ for (const theme of ['dark', 'light']) {
     await p.waitForSelector('.tdb-team', { timeout: 15000 });
     const txt = await p.innerText('#adm-main');
     if (theme === 'dark' && width === 1280) {
-      ok(/STUDIO NORD/i.test(txt) && !/ATELIER SUD/i.test(txt) && !/CHEZ TAO/i.test(txt),
-        'Mia voit Studio Nord et son « Chez moi », ni Atelier Sud ni le « Chez moi » de Tao');
+      ok(/STUDIO NORD/i.test(txt) && !/ATELIER SUD/i.test(txt) && !/TAO ESSAI/i.test(txt),
+        'Mia voit Studio Nord et sa Team personnelle, ni Atelier Sud ni celle de Tao');
       ok(/\bCal\b/.test(txt) && !/nico007/i.test(txt), 'Mia voit Cal parmi les auteurs, jamais son pseudo (ce qu’on tape à la porte)');
       const nav = await p.$$eval('#adm-nav .item .nm', (xs) => xs.map((x) => x.textContent));
       ok(JSON.stringify(nav) === JSON.stringify(['Tableau de bord', 'Teams']), `le rack de Mia : son tableau de bord, puis Teams (${nav})`);

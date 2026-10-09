@@ -12,7 +12,7 @@ Workspace) et les Teams du socle (core/espaces.py). Les droits sont ceux de l'in
 jamais une fiche d'un Workspace où l'on n'entre pas ; Cal entre partout, en lecture.
 
     GET /api/tableau[?toutes=1]           les Teams que la personne voit (Cal, avec ?toutes=1 :
-                                          toutes, les « Chez moi » de chacun comprises, et ce qui
+                                          toutes, les Teams personnelles comprises, et ce qui
                                           est resté d'un Workspace qui n'existe plus) → par Team,
                                           par Workspace : le nombre d'objets par sorte, par auteur,
                                           la dernière activité ; les personnes (qui a créé combien,
@@ -103,10 +103,13 @@ class _View:
         return self._names[key]
 
     def team_name(self, t: dict) -> str:
-        """« Chez moi » pour la sienne, « Chez <nom> » pour celle d'un autre (Cal les voit toutes)."""
-        if t.get("personal"):
-            return "Chez moi" if t.get("owner") == self.uid else f"Chez {self.person(t.get('owner'))['name']}"
-        return t.get("name") or t.get("id") or ""
+        """Le nom d'une Team pour cette personne : la Team personnelle d'un autre dit à qui elle
+        est (« <son nom> · <le nom de la personne> » : Cal les voit toutes, toutes nées du même
+        nom) — la règle du nom de la Team dans l'en-tête des Teams v2 (09/10)."""
+        name = t.get("name") or t.get("id") or ""
+        if t.get("personal") and t.get("owner") != self.uid:
+            return f"{name} · {self.person(t.get('owner'))['name']}"
+        return name
 
     def of(self, sid: str) -> dict:
         sp = self.spaces.get(sid)
@@ -181,7 +184,7 @@ def overview(u, every: bool = False) -> dict:
                           "owner": t.get("owner"), "owner_name": t.get("owner_name"), "plan": t.get("plan"),
                           "archived": t.get("archived"), "role": t.get("role"), "total": len(rs), "counts": _counts(rs),
                           "last": _last(rs, V), "spaces": spaces})
-    # l'ordre : les Teams partagées, puis mon « Chez moi », puis ceux des autres ; dans chaque groupe, la
+    # l'ordre : les Teams partagées, puis ma Team personnelle, puis celles des autres ; dans chaque groupe, la
     # dernière activité d'abord (trois tris stables)
     teams_out.sort(key=lambda t: t["name"].lower())
     teams_out.sort(key=lambda t: (t["last"] or {}).get("at") or "", reverse=True)
@@ -497,19 +500,20 @@ def _selftest_equipes(ok) -> None:
         s2, _ = G("/api/tableau/personne/cal", tao)
         ok(s == 200 and mine.get("total") == pe.get("total") and s2 == 403,
            f"tableau : Tao lit son propre tableau ; pas celui de Cal ({s} {s2})")
-        # le pseudo d'un compte (ce qu'on tape à la porte) : à Cal seulement ; « Chez moi » pour la sienne
+        # le pseudo d'un compte (ce qu'on tape à la porte) : à Cal seulement ; sa Team personnelle sous son nom
         s, tv = G("/api/tableau", tao)
         s2, tf = G("/api/tableau/cherche?q=nico007", tao)
         calp = next((x for x in tv.get("people") or [] if x["id"] == "cal"), {}) if isinstance(tv, dict) else {}
         own = next((x for x in tv.get("teams") or [] if x.get("mine")), {}) if isinstance(tv, dict) else {}
+        pname = (espaces._data()["teams"].get(espaces.personal_team_id(tao_id)) or {}).get("name")
         ok(s == 200 and calp.get("name") and calp.get("pseudo") == "" and s2 == 200 and not tf.get("people")
-           and own.get("name") == "Chez moi" and own.get("personal"),
-           f"tableau : Tao ne lit ni ne cherche le pseudo de Cal ; sa Team personnelle s'appelle « Chez moi » ({calp} {own.get('name')})")
+           and pname and own.get("name") == pname and own.get("personal"),
+           f"tableau : Tao ne lit ni ne cherche le pseudo de Cal ; sa Team personnelle sous son nom ({calp} {own.get('name')})")
         _, cf = G("/api/tableau/cherche?q=nico007&toutes=1")
         _, cv = G("/api/tableau?toutes=1")
         ok([x["id"] for x in cf.get("people") or []] == ["cal"]
-           and any(x.get("name") == "Chez Tao Tableau" and not x.get("mine") for x in cv.get("teams") or []),
-           "tableau : Cal cherche par pseudo ; la Team personnelle d'un autre est « Chez <son nom> »")
+           and any(x.get("name") == f"{pname} · Tao Tableau" and not x.get("mine") for x in cv.get("teams") or []),
+           "tableau : Cal cherche par pseudo ; la Team personnelle d'un autre dit à qui elle est")
 
         # ── les droits : un membre d'une autre Team ne voit rien de Tableau Essai ──
         s, lv = G("/api/tableau", lou)
