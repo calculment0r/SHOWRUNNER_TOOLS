@@ -150,6 +150,7 @@ for (const theme of ['dark', 'light']) {
     const ptxt = await p.innerText('.tdb-person');
     if (theme === 'dark' && width === 1280) {
       ok(/Notes vocales/.test(ptxt) && /Perso/.test(ptxt), 'la recherche « tao » mène à sa transcription, dans son Perso');
+      ok(!/\[object|undefined|NaN/.test(ptxt), 'la fiche de Tao se lit (ni [object…], ni undefined)');
       const href = await p.getAttribute('.tdb-person .tdb-it[data-kind="transcription"]', 'href');
       ok(href && href.includes(`transcrire/?e=${P}#`), `la transcription s'ouvre dans Transcrire, dans le Perso de Tao (${href})`);
       // l'ouvrir : un nouvel onglet, dans son Workspace, le document ouvert
@@ -177,6 +178,7 @@ for (const theme of ['dark', 'light']) {
     if (theme === 'dark' && width === 1280) {
       ok(/STUDIO NORD/i.test(txt) && !/ATELIER SUD/i.test(txt) && !/CHEZ TAO/i.test(txt),
         'Mia voit Studio Nord et son « Chez moi », ni Atelier Sud ni le « Chez moi » de Tao');
+      ok(/\bCal\b/.test(txt) && !/nico007/i.test(txt), 'Mia voit Cal parmi les auteurs, jamais son pseudo (ce qu’on tape à la porte)');
       const nav = await p.$$eval('#adm-nav .item .nm', (xs) => xs.map((x) => x.textContent));
       ok(JSON.stringify(nav) === JSON.stringify(['Tableau de bord', 'Teams']), `le rack de Mia : son tableau de bord, puis Teams (${nav})`);
       ok(new URL(p.url()).hash === '#tableau', `Mia arrive sur son tableau de bord (${p.url()})`);

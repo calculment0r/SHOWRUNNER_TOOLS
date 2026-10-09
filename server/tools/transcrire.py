@@ -1981,11 +1981,14 @@ def _inventaire():
     et `space` (celui du son), posés par library.stamp à la naissance ; `job` : sa
     transcription. Le carnet est dans le document (`notes`, `qa`) : il se compte avec lui."""
     from core import inventaire
-    for f, d in inventaire.json_docs(p for p in _dir().glob("trn-*.json") if not p.name.endswith(".voix.json")):
-        carnet = any((v or {}).get("state") == "done" for v in (d.get("notes") or {}).values()) or bool(d.get("qa"))
-        yield {"id": f.stem, "title": d.get("title"), "owner": d.get("owner"), "job": d.get("job"), "space": d.get("space"),
-               "created": d.get("created"), "updated": d.get("updated"), "open": f"transcrire/#{f.stem}",
-               "thumb": d.get("thumb_url"), "sub": MODES.get(mode_of(d.get("mode")), {}).get("label", "") + (" · carnet" if carnet else "")}
+    return inventaire.json_docs((p for p in _dir().glob("trn-*.json") if not p.name.endswith(".voix.json")), _inventaire_fiche)
+
+
+def _inventaire_fiche(f: Path, d: dict) -> dict:
+    carnet = any((v or {}).get("state") == "done" for v in (d.get("notes") or {}).values()) or bool(d.get("qa"))
+    return {"id": f.stem, "title": d.get("title"), "owner": d.get("owner"), "job": d.get("job"), "space": d.get("space"),
+            "created": d.get("created"), "updated": d.get("updated"), "open": f"transcrire/#{f.stem}",
+            "thumb": d.get("thumb_url"), "sub": MODES.get(mode_of(d.get("mode")), {}).get("label", "") + (" · carnet" if carnet else "")}
 
 
 def register(app) -> None:

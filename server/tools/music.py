@@ -1167,10 +1167,14 @@ def _inventaire():
     """Les projets ODIO, pour l'inventaire (core/inventaire.py) : `owner` et `space`, posés
     par library.stamp à la naissance (un projet d'avant le 29/09 n'a pas d'auteur)."""
     from core import inventaire
-    for f, p in inventaire.json_docs(_dir().glob("mus-*.json")):
-        yield {"id": f.stem, "title": p.get("name") or "Sans titre", "owner": p.get("owner"), "space": p.get("space"),
-               "created": p.get("created"), "updated": p.get("updated"), "open": f"musique/?p={f.stem}",
-               "sub": f"{len(p.get('tracks') or [])} pistes"}
+    return inventaire.json_docs(_dir().glob("mus-*.json"), _inventaire_fiche)
+
+
+def _inventaire_fiche(f: Path, p: dict) -> dict:
+    n = len(p.get("tracks") or [])
+    return {"id": f.stem, "title": p.get("name") or "Sans titre", "owner": p.get("owner"), "space": p.get("space"),
+            "created": p.get("created"), "updated": p.get("updated"), "open": f"musique/?p={f.stem}",
+            "sub": f"{n} piste{'s' if n > 1 else ''}"}
 
 
 def register(app) -> None:

@@ -1979,11 +1979,17 @@ def _inventaire():
     MP4 sont des objets de la bibliothèque)."""
     from core import inventaire
     from tools import ideation_collab
-    for f, b in inventaire.json_docs(_dir().glob("ide-*.json")):
-        slides = sum(1 for n in b.get("nodes") or [] if isinstance(n, dict) and n.get("slide") is not None)
-        yield {"id": f.stem, "title": b.get("name") or "Sans titre", "owner": ideation_collab._access(f.stem).get("owner"),
-               "space": b.get("space"), "created": b.get("created"), "updated": b.get("updated"), "open": f"ideation/#{f.stem}",
-               "sub": f"présentation · {slides} diapositive{'s' if slides > 1 else ''}" if slides else ""}
+    for r in inventaire.json_docs(_dir().glob("ide-*.json"), _inventaire_fiche):
+        # l'auteur n'est pas dans la planche : lu à chaque fois (le fichier d'accès change sans elle)
+        yield {**r, "owner": ideation_collab._access(r["id"]).get("owner")}
+
+
+def _inventaire_fiche(f: Path, b: dict) -> dict:
+    from tools import presentation_pdf   # ce qu'est une diapositive : la règle de l'export, une seule vérité
+    slides = len(presentation_pdf._slides({"nodes": [n for n in b.get("nodes") or [] if isinstance(n, dict) and "type" in n]}))
+    return {"id": f.stem, "title": b.get("name") or "Sans titre", "space": b.get("space"), "created": b.get("created"),
+            "updated": b.get("updated"), "open": f"ideation/#{f.stem}",
+            "sub": f"présentation · {slides} diapositive{'s' if slides > 1 else ''}" if slides else ""}
 
 
 def register(app) -> None:

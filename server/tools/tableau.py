@@ -73,30 +73,39 @@ def _at(r: dict) -> str:
     return max(r.get("updated") or "", r.get("created") or "")
 
 
-def _person(uid: str | None) -> dict:
-    """Le nom d'un auteur : son compte ; un compte supprimé garde son identifiant (`gone`)."""
-    if not uid:
-        return {"id": UNKNOWN, "name": "auteur inconnu", "pseudo": "", "gone": False, "unknown": True}
-    u = auth.user(uid)
-    if not u:
-        return {"id": uid, "name": uid, "pseudo": "", "gone": True, "unknown": False}
-    return {"id": uid, "name": u.get("name") or uid, "pseudo": u.get("pseudo") or u.get("name") or uid,
-            "gone": False, "unknown": False}
+class _View:
+    """Ce que voit la personne, le temps d'une requête : les noms des auteurs (chacun lu une
+    fois), les Workspaces et leurs Teams (lus une fois). Un Workspace qui n'existe plus
+    (`orphan`) garde son identifiant ; un compte supprimé, le sien (`gone`). Le pseudo d'un
+    compte — ce qu'on tape à la porte, sans mot de passe (décision du 29/09) — n'est montré
+    qu'à Cal ; un autre cherche par le nom."""
 
-
-class _Places:
-    """Les noms des Workspaces et de leurs Teams, lus une fois par requête. Un Workspace qui
-    n'existe plus (`orphan`) garde son identifiant."""
-
-    def __init__(self) -> None:
+    def __init__(self, u: dict) -> None:
+        self.u, self.uid, self.admin = u, u.get("id"), auth.is_admin(u)
+        self._names: dict[str, dict] = {}
         with espaces._lock:
             db = espaces._data()
             self.spaces = {k: dict(v) for k, v in db["spaces"].items()}
             self.teams = {k: dict(v) for k, v in db["teams"].items()}
 
+    def person(self, uid: str | None) -> dict:
+        key = uid or UNKNOWN
+        if key not in self._names:
+            x = auth.user(uid) if key != UNKNOWN else None
+            if key == UNKNOWN:
+                p = {"id": UNKNOWN, "name": "auteur inconnu", "pseudo": "", "gone": False, "unknown": True}
+            elif not x:
+                p = {"id": key, "name": key, "pseudo": "", "gone": True, "unknown": False}
+            else:
+                p = {"id": key, "name": x.get("name") or key, "gone": False, "unknown": False,
+                     "pseudo": (x.get("pseudo") or x.get("name") or key) if self.admin else ""}
+            self._names[key] = p
+        return self._names[key]
+
     def team_name(self, t: dict) -> str:
+        """« Chez moi » pour la sienne, « Chez <nom> » pour celle d'un autre (Cal les voit toutes)."""
         if t.get("personal"):
-            return f"Chez {auth.display_name(t.get('owner')) or t.get('owner')}"
+            return "Chez moi" if t.get("owner") == self.uid else f"Chez {self.person(t.get('owner'))['name']}"
         return t.get("name") or t.get("id") or ""
 
     def of(self, sid: str) -> dict:
@@ -109,44 +118,41 @@ class _Places:
                 "personal": bool(t.get("personal")), "orphan": False}
 
 
-def _last(rs: list[dict], places: _Places | None = None) -> dict | None:
+def _last(rs: list[dict], V: _View, where: bool = False) -> dict | None:
     if not rs:
         return None
     r = max(rs, key=_at)
     out = {"at": _at(r), "kind": r["kind"], "id": r["id"], "title": r["title"], "owner": r["owner"] or UNKNOWN,
-           "owner_name": _person(r["owner"])["name"], "open": inventaire.with_e(r["open"], r["space"])}
-    if places:
-        out.update(places.of(r["space"]))
+           "owner_name": V.person(r["owner"])["name"], "open": inventaire.with_e(r["open"], r["space"])}
+    if where:
+        out.update(V.of(r["space"]))
     return out
 
 
-def _authors(rs: list[dict]) -> list[dict]:
+def _authors(rs: list[dict], V: _View) -> list[dict]:
     by: dict[str, list] = {}
     for r in rs:
         by.setdefault(r["owner"] or UNKNOWN, []).append(r)
-    out = []
-    for uid, xs in by.items():
-        p = _person(None if uid == UNKNOWN else uid)
-        out.append({**p, "n": len(xs), "last": max(_at(x) for x in xs)})
+    out = [{**V.person(uid), "n": len(xs), "last": max(_at(x) for x in xs)} for uid, xs in by.items()]
     return sorted(out, key=lambda a: (-a["n"], a["name"].lower()))
 
 
-def item_out(r: dict, places: _Places | None = None) -> dict:
+def item_out(r: dict, V: _View, where: bool = False) -> dict:
     """Une fiche telle que la page la montre : son auteur nommé, son adresse dans le Workspace
     de l'objet, sa vignette (calculée ici seulement : la page montrée)."""
-    p = _person(r["owner"])
+    p = V.person(r["owner"])
     out = {"kind": r["kind"], "id": r["id"], "title": r["title"], "sub": r["sub"], "tool": r["tool"],
            "owner": p["id"], "owner_name": p["name"], "owner_gone": p["gone"], "via": r["via"],
            "created": r["created"], "updated": r["updated"], "space": r["space"],
            "open": inventaire.with_e(r["open"], r["space"]), "thumb": inventaire.thumb_of(r)}
-    if places:
-        out.update(places.of(r["space"]))
+    if where:
+        out.update(V.of(r["space"]))
     return out
 
 
-def _space_out(sp: dict, rs: list[dict]) -> dict:
+def _space_out(sp: dict, rs: list[dict], V: _View) -> dict:
     return {"id": sp["id"], "name": sp.get("name") or sp["id"], "archived": sp.get("archived"), "role": sp.get("role"),
-            "total": len(rs), "counts": _counts(rs), "authors": _authors(rs), "last": _last(rs),
+            "total": len(rs), "counts": _counts(rs), "authors": _authors(rs, V), "last": _last(rs, V),
             # le Workspace dans Asset (l'onglet y passe : ?e=), ses objets en grand
             "open": inventaire.with_e(f"asset/#/w/{sp['id']}", sp["id"])}
 
@@ -155,8 +161,8 @@ def _space_out(sp: dict, rs: list[dict]) -> dict:
 def overview(u, every: bool = False) -> dict:
     """Par Team, par Workspace : les comptes par sorte, par auteur, la dernière activité ;
     les personnes ; ce qui est resté d'un Workspace qui n'existe plus (Cal, `every`)."""
+    V = _View(u)
     recs = inventaire.visible_records(u)
-    places = _Places()
     by_space: dict[str, list] = {}
     for r in recs:
         by_space.setdefault(r["space"], []).append(r)
@@ -167,15 +173,14 @@ def overview(u, every: bool = False) -> dict:
             if not (sp.get("can") or {}).get("view"):
                 continue
             listed.add(sp["id"])
-            spaces.append(_space_out(sp, by_space.get(sp["id"], [])))
-        rs = [r for s in t.get("spaces") or [] for r in by_space.get(s["id"], [])]
+            spaces.append(_space_out(sp, by_space.get(sp["id"], []), V))
+        rs = [r for s in spaces for r in by_space.get(s["id"], [])]
         spaces.sort(key=lambda s: (bool(s["archived"]), not s["total"]))   # sinon l'ordre du socle : de leur création
-        teams_out.append({"id": t["id"], "name": t["name"] if not t.get("personal") or t.get("role") == "owner"
-                          else f"Chez {t.get('owner_name') or t.get('owner')}", "personal": bool(t.get("personal")),
-                          "mine": t.get("role") == "owner" and bool(t.get("personal")), "owner": t.get("owner"),
-                          "owner_name": t.get("owner_name"), "plan": t.get("plan"), "archived": t.get("archived"),
-                          "role": t.get("role"), "total": len(rs), "counts": _counts(rs), "last": _last(rs),
-                          "spaces": spaces})
+        personal = bool(t.get("personal"))
+        teams_out.append({"id": t["id"], "name": V.team_name(t), "personal": personal, "mine": personal and t.get("owner") == V.uid,
+                          "owner": t.get("owner"), "owner_name": t.get("owner_name"), "plan": t.get("plan"),
+                          "archived": t.get("archived"), "role": t.get("role"), "total": len(rs), "counts": _counts(rs),
+                          "last": _last(rs, V), "spaces": spaces})
     # l'ordre : les Teams partagées, puis mon « Chez moi », puis ceux des autres ; dans chaque groupe, la
     # dernière activité d'abord (trois tris stables)
     teams_out.sort(key=lambda t: t["name"].lower())
@@ -183,23 +188,20 @@ def overview(u, every: bool = False) -> dict:
     teams_out.sort(key=lambda t: (bool(t["archived"]), t["personal"], t["personal"] and not t["mine"]))
     orphans = None
     if every:
-        lost = {s: rs for s, rs in by_space.items() if s not in places.spaces}
+        lost = {s: rs for s, rs in by_space.items() if s not in V.spaces}
         if lost:
             listed |= set(lost)
             rs = [r for x in lost.values() for r in x]
-            orphans = {"total": len(rs), "counts": _counts(rs), "last": _last(rs),
-                       "spaces": [{**_space_out({"id": s, "name": s}, x), "orphan": True} for s, x in sorted(lost.items())]}
+            orphans = {"total": len(rs), "counts": _counts(rs), "last": _last(rs, V),
+                       "spaces": [{**_space_out({"id": s, "name": s}, x, V), "orphan": True} for s, x in sorted(lost.items())]}
     mine = [r for r in recs if r["space"] in listed]
     people: dict[str, list] = {}
     for r in mine:
         people.setdefault(r["owner"] or UNKNOWN, []).append(r)
-    people_out = []
-    for uid, rs in people.items():
-        p = _person(None if uid == UNKNOWN else uid)
-        people_out.append({**p, "total": len(rs), "counts": _counts(rs), "spaces": len({r["space"] for r in rs}),
-                           "last": _last(rs, places)})
+    people_out = [{**V.person(uid), "total": len(rs), "counts": _counts(rs), "spaces": len({r["space"] for r in rs}),
+                   "last": _last(rs, V, where=True)} for uid, rs in people.items()]
     people_out.sort(key=lambda p: (p["unknown"], -p["total"], p["name"].lower()))
-    return {"everyone": every, "me": _person(u.get("id")), "admin": auth.is_admin(u), "kinds": inventaire.kinds(),
+    return {"everyone": every, "me": V.person(V.uid), "admin": V.admin, "kinds": inventaire.kinds(),
             "total": len(mine), "counts": _counts(mine), "teams": teams_out, "orphans": orphans, "people": people_out}
 
 
@@ -209,38 +211,39 @@ def r_overview(req):
 
 
 # ── GET /api/tableau/espace/<sid> ───────────────────────────
-def _filter(rs: list[dict], req) -> tuple[list[dict], list[dict]]:
+def _filter(rs: list[dict], req, V: _View) -> tuple[list[dict], list[dict]]:
     """(avant le filtre de sorte, après tous les filtres) — `q` (titre, auteur), `author`, `kind`."""
     q = inventaire.fold(req.q("q").strip())
     author = req.q("author").strip()
     if author:
         rs = [r for r in rs if (r["owner"] or UNKNOWN) == author]
     if q:
-        rs = [r for r in rs if q in inventaire.fold(r["title"]) or q in inventaire.fold(_person(r["owner"])["name"])]
+        rs = [r for r in rs if q in inventaire.fold(r["title"]) or q in inventaire.fold(V.person(r["owner"])["name"])]
     wanted = {k for k in req.q("kind").split(",") if k}
     return rs, [r for r in rs if r["kind"] in wanted] if wanted else rs
 
 
-def _page(rs: list[dict], req, places: _Places | None = None) -> dict:
+def _page(rs: list[dict], req, V: _View, where: bool = False) -> dict:
     limit = _int(req.q("limit"), LIMIT, 1, LIMIT_MAX)
     offset = _int(req.q("offset"), 0, 0, 10 ** 9)
     rs = sorted(rs, key=_at, reverse=True)
-    return {"total": len(rs), "offset": offset, "limit": limit, "items": [item_out(r, places) for r in rs[offset:offset + limit]]}
+    return {"total": len(rs), "offset": offset, "limit": limit,
+            "items": [item_out(r, V, where) for r in rs[offset:offset + limit]]}
 
 
 def space_items(u, sid: str, req) -> dict:
-    places = _Places()
-    known = sid in places.spaces
+    V = _View(u)
+    known = sid in V.spaces
     # un Workspace qu'on ne voit pas répond comme un Workspace qui n'existe pas ; ce qui reste d'un
     # Workspace détruit ne se lit que par Cal (la vue d'ensemble le lui montre)
-    if not ((known and espaces.can_view(u, sid)) or (not known and auth.is_admin(u) and espaces.SPACE_RX.fullmatch(sid))):
+    if not ((known and espaces.can_view(u, sid)) or (not known and V.admin and espaces.SPACE_RX.fullmatch(sid))):
         raise HttpError(404, f"Workspace inconnu, ou pas pour toi : {sid[:48]}")
     rs = [r for r in inventaire.visible_records(u) if r["space"] == sid]
     if not known and not rs:
         raise HttpError(404, f"Workspace inconnu, ou pas pour toi : {sid[:48]}")
-    base, rs2 = _filter(rs, req)
-    return {**places.of(sid), "role": espaces.space_role(u, sid) if known else None, "counts": _counts(base),
-            "authors": _authors(rs), "kinds": inventaire.kinds(), **_page(rs2, req)}
+    base, rs2 = _filter(rs, req, V)
+    return {**V.of(sid), "role": espaces.space_role(u, sid) if known else None, "counts": _counts(base),
+            "authors": _authors(rs, V), "kinds": inventaire.kinds(), **_page(rs2, req, V)}
 
 
 def r_space(req, sid):
@@ -248,26 +251,25 @@ def r_space(req, sid):
 
 
 # ── GET /api/tableau/personne/<uid> ─────────────────────────
-WHY_PERSON = "le tableau d'une autre personne : Cal seul — le tien est sous « moi »"
+WHY_PERSON = "le tableau d'une autre personne : Cal seul — le tien est sous « Ce que j'ai créé »"
 
 
 def person_items(u, uid: str, req) -> dict:
-    admin = auth.is_admin(u)
-    if not admin and uid != u.get("id"):
+    V = _View(u)
+    if not V.admin and uid != V.uid:
         raise HttpError(403, WHY_PERSON)
     who = None if uid == UNKNOWN else uid
     rs = [r for r in inventaire.visible_records(u) if r["owner"] == who]
     if who and not rs and not auth.user(who):
         raise HttpError(404, f"personne inconnue : {uid[:48]}")
-    places = _Places()
     by: dict[str, list] = {}
     for r in rs:
         by.setdefault(r["space"], []).append(r)
-    spaces = sorted(({**places.of(s), "n": len(x), "counts": _counts(x), "last": max(_at(r) for r in x)} for s, x in by.items()),
+    spaces = sorted(({**V.of(s), "n": len(x), "counts": _counts(x), "last": max(_at(r) for r in x)} for s, x in by.items()),
                     key=lambda s: s["last"], reverse=True)
-    base, rs2 = _filter(rs, req)
-    return {"person": _person(who), "counts": _counts(base), "spaces": spaces, "last": _last(rs, places),
-            "kinds": inventaire.kinds(), **_page(rs2, req, places)}
+    base, rs2 = _filter(rs, req, V)
+    return {"person": V.person(who), "counts": _counts(base), "spaces": spaces, "last": _last(rs, V, where=True),
+            "kinds": inventaire.kinds(), **_page(rs2, req, V, where=True)}
 
 
 def r_person(req, uid):
@@ -276,15 +278,15 @@ def r_person(req, uid):
 
 # ── GET /api/tableau/cherche ────────────────────────────────
 def search(u, q: str, every: bool) -> dict:
-    """Les personnes (un nom, un pseudo) et les objets (un titre, le nom de leur auteur) qui
-    répondent à `q`. Cal : tous les comptes, même ceux qui n'ont rien créé (« il n'a rien
-    fait » est une réponse) ; un autre : les auteurs de ce qu'il voit."""
+    """Les personnes (un nom ; Cal : aussi un pseudo, un identifiant) et les objets (un titre,
+    le nom de leur auteur) qui répondent à `q`. Cal : tous les comptes, même ceux qui n'ont
+    rien créé (« il n'a rien fait » est une réponse) ; un autre : les auteurs de ce qu'il voit."""
     qf = inventaire.fold(q.strip())
     if not qf:
         return {"q": q, "people": [], "items": [], "total": 0}
-    places = _Places()
+    V = _View(u)
     recs = inventaire.visible_records(u)
-    if not every and auth.is_admin(u):   # Cal sans ?toutes=1 : ses Teams, comme la vue d'ensemble
+    if not every and V.admin:   # Cal sans ?toutes=1 : ses Teams, comme la vue d'ensemble
         mine = {s["id"] for t in espaces.teams_of(u) for s in t.get("spaces") or []}
         recs = [r for r in recs if r["space"] in mine]
     per: dict[str, list] = {}
@@ -295,15 +297,15 @@ def search(u, q: str, every: bool) -> dict:
         ids |= {x["id"] for x in auth.users_public()}
     people = []
     for uid in ids:
-        p = _person(None if uid == UNKNOWN else uid)
-        if qf in inventaire.fold(p["name"]) or qf in inventaire.fold(p["pseudo"]) or (not p["unknown"] and qf == inventaire.fold(uid)):
+        p = V.person(None if uid == UNKNOWN else uid)
+        if qf in inventaire.fold(p["name"]) or (V.admin and not p["unknown"] and (qf in inventaire.fold(p["pseudo"]) or qf == inventaire.fold(uid))):
             rs = per.get(uid, [])
             people.append({**p, "total": len(rs), "counts": _counts(rs), "spaces": len({r["space"] for r in rs}),
-                           "last": _last(rs, places)})
+                           "last": _last(rs, V, where=True)})
     people.sort(key=lambda p: (-p["total"], p["name"].lower()))
-    hits = [r for r in recs if qf in inventaire.fold(r["title"]) or qf in inventaire.fold(_person(r["owner"])["name"])]
+    hits = [r for r in recs if qf in inventaire.fold(r["title"]) or qf in inventaire.fold(V.person(r["owner"])["name"])]
     hits.sort(key=_at, reverse=True)
-    return {"q": q, "people": people, "total": len(hits), "items": [item_out(r, places) for r in hits[:SEARCH_MAX]]}
+    return {"q": q, "people": people, "total": len(hits), "items": [item_out(r, V, where=True) for r in hits[:SEARCH_MAX]]}
 
 
 def r_search(req):
@@ -335,6 +337,13 @@ def selftest(call, ok) -> None:
     ok(inventaire.with_e("musique/?p=mus-1", "esp-a") == "musique/?p=mus-1&e=esp-a"
        and inventaire.with_e("transcrire/#trn-1", "esp-a") == "transcrire/?e=esp-a#trn-1"
        and inventaire.fold("Évènement") == "evenement", "tableau : l'adresse dans son Workspace (?e= avant le #), la recherche sans accents")
+    # une présentation : une planche qui a des diapositives (la règle de l'export, presentation_pdf._slides)
+    from pathlib import Path
+    from tools import ideation
+    fx = ideation._inventaire_fiche(Path("ide-20000101-000000-0000.json"), {"name": "Deck", "nodes": [
+        {"type": "frame", "deck": {"ratio": "16:9"}}, {"type": "frame", "deck": {"ratio": "16:9"}, "skip": True}, {"type": "frame"}, "abîmé"]})
+    ok(fx["sub"] == "présentation · 1 diapositive" and fx["open"] == "ideation/#ide-20000101-000000-0000",
+       f"tableau : une planche à diapositives se dit présentation ({fx})")
     _selftest_equipes(ok)
 
 
@@ -447,6 +456,9 @@ def _selftest_equipes(ok) -> None:
         ok(trn.get("owner") == tao_id and trn.get("space") == W1,
            f"tableau : la transcription porte son auteur et son Workspace ({trn.get('owner')} {trn.get('space')})")
 
+        sc, _ = U("cal.png", b.getvalue(), "image/png", cal, W1, "Repérage de Cal")   # Cal, auteur dans la Team de Tao
+        ok(sc == 200, f"tableau : Cal dépose une image dans Tableau Essai ({sc})")
+
         # ── Cal : le Workspace, chaque sorte, son auteur ──
         s, sp = G(f"/api/tableau/espace/{W1}?limit=500")
         by_kind: dict = {}
@@ -485,6 +497,19 @@ def _selftest_equipes(ok) -> None:
         s2, _ = G("/api/tableau/personne/cal", tao)
         ok(s == 200 and mine.get("total") == pe.get("total") and s2 == 403,
            f"tableau : Tao lit son propre tableau ; pas celui de Cal ({s} {s2})")
+        # le pseudo d'un compte (ce qu'on tape à la porte) : à Cal seulement ; « Chez moi » pour la sienne
+        s, tv = G("/api/tableau", tao)
+        s2, tf = G("/api/tableau/cherche?q=nico007", tao)
+        calp = next((x for x in tv.get("people") or [] if x["id"] == "cal"), {}) if isinstance(tv, dict) else {}
+        own = next((x for x in tv.get("teams") or [] if x.get("mine")), {}) if isinstance(tv, dict) else {}
+        ok(s == 200 and calp.get("name") and calp.get("pseudo") == "" and s2 == 200 and not tf.get("people")
+           and own.get("name") == "Chez moi" and own.get("personal"),
+           f"tableau : Tao ne lit ni ne cherche le pseudo de Cal ; sa Team personnelle s'appelle « Chez moi » ({calp} {own.get('name')})")
+        _, cf = G("/api/tableau/cherche?q=nico007&toutes=1")
+        _, cv = G("/api/tableau?toutes=1")
+        ok([x["id"] for x in cf.get("people") or []] == ["cal"]
+           and any(x.get("name") == "Chez Tao Tableau" and not x.get("mine") for x in cv.get("teams") or []),
+           "tableau : Cal cherche par pseudo ; la Team personnelle d'un autre est « Chez <son nom> »")
 
         # ── les droits : un membre d'une autre Team ne voit rien de Tableau Essai ──
         s, lv = G("/api/tableau", lou)
@@ -519,8 +544,14 @@ def _selftest_equipes(ok) -> None:
         ok((r1.get("owner"), r1.get("via")) == (tao_id, "travail") and (r2.get("owner"), r2.get("via")) == (lou_id, "journal"),
            f"tableau : sans auteur, celui de son travail, sinon le premier geste du journal ({r1.get('owner')} {r1.get('via')} · "
            f"{r2.get('owner')} {r2.get('via')})")
+        # la fiche gardée en mémoire suit le fichier : un titre changé se lit au relevé suivant
+        old1["title"] = "Titre changé sur le disque"
+        (src.parent / f"{old1['id']}.json").write_text(_json.dumps(old1, ensure_ascii=False), encoding="utf-8")
+        r1 = next((r for r in inventaire.records() if r["id"] == old1["id"]), {})
+        ok(r1.get("title") == "Titre changé sur le disque", f"tableau : un document réécrit est relu ({r1.get('title')})")
         for x in (old1, old2):
             (src.parent / f"{x['id']}.json").unlink(missing_ok=True)
+        ok(not any(r["id"] in (old1["id"], old2["id"]) for r in inventaire.records()), "tableau : un document effacé quitte l'inventaire")
 
         # ── ce qui reste d'un Workspace disparu : Cal seul le voit ──
         _, x = U("perdu.png", b.getvalue(), "image/png", cal, W1, "Perdue")

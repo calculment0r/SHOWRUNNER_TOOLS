@@ -754,12 +754,18 @@ def _inventaire():
     ouverte) et `space` (celui de l'image source), posés par library.stamp. Ce qui a été
     validé est un objet de la bibliothèque (le socle le compte)."""
     from core import inventaire
-    for f, s in inventaire.json_docs(root().glob("atl-*.json")):
-        src = library._items.get(str(s.get("source") or ""))
-        n = len(s.get("trials") or [])
-        yield {"id": f.stem, "title": f"Atelier · {(src or {}).get('title') or s.get('source') or '?'}", "owner": s.get("owner"),
-               "space": s.get("space"), "created": s.get("created"), "updated": s.get("updated"), "open": f"image/atelier/?s={f.stem}",
-               "sub": f"{n} essai{'s' if n > 1 else ''}", "thumb": (lambda src=src: library.public(src).get("thumb_url")) if src else None}
+    for r in inventaire.json_docs(root().glob("atl-*.json"), _inventaire_fiche):
+        # le titre et la vignette sont ceux de l'image source : lus à chaque fois (elle se renomme sans la session)
+        src = library._items.get(r["source"])
+        yield {**r, "title": f"Atelier · {(src or {}).get('title') or r['source'] or '?'}",
+               "thumb": (lambda src=src: library.public(src).get("thumb_url")) if src else None}
+
+
+def _inventaire_fiche(f: Path, s: dict) -> dict:
+    n = len(s.get("trials") or [])
+    return {"id": f.stem, "source": str(s.get("source") or ""), "owner": s.get("owner"), "space": s.get("space"),
+            "created": s.get("created"), "updated": s.get("updated"), "open": f"image/atelier/?s={f.stem}",
+            "sub": f"{n} essai{'s' if n > 1 else ''}"}
 
 
 def register(app) -> None:

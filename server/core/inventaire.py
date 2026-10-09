@@ -84,32 +84,37 @@ def kinds() -> list[dict]:
 
 
 # ── lire les documents d'un outil : relus seulement s'ils ont changé ──
-_docs: dict[str, tuple[tuple, object]] = {}
+_docs: dict[tuple, tuple[tuple, dict | None]] = {}
 
 
-def json_docs(paths):
-    """(chemin, document) pour chaque fichier JSON lisible de `paths` — un fichier n'est relu
-    que si sa date ou sa taille a changé (les outils écrivent d'un coup : tmp puis replace).
-    À lire, jamais à modifier (le même objet revient d'un appel à l'autre)."""
+def json_docs(paths, fiche):
+    """La fiche de chaque fichier JSON lisible de `paths` : `fiche(chemin, document)` (un dict,
+    ou None : pas une création). Seule la fiche est gardée en mémoire, jamais le document (une
+    transcription au mot pèse des mégaoctets) ; un fichier n'est relu que si sa date ou sa
+    taille a changé (les outils écrivent d'un coup : tmp puis replace). La fiche revient d'un
+    appel à l'autre : à lire, jamais à modifier ; ce qui dépend d'un autre document (le titre
+    d'une image source, l'auteur d'un fichier d'accès) se lit à part, à chaque fois."""
+    who = (getattr(fiche, "__module__", ""), getattr(fiche, "__qualname__", ""))
     for p in paths:
         try:
             st = p.stat()
         except OSError:
             continue
-        key, sig = str(p), (st.st_mtime_ns, st.st_size)
+        key, sig = (*who, str(p)), (st.st_mtime_ns, st.st_size)
         hit = _docs.get(key)
         if hit and hit[0] == sig:
-            d = hit[1]
+            got = hit[1]
         else:
             try:
                 d = json.loads(p.read_text(encoding="utf-8"))
             except (OSError, ValueError):
                 continue
+            got = fiche(p, d) if isinstance(d, dict) else None
             if len(_docs) > 50000:   # un garde-fou : la mémoire ne grossit pas sans fin
                 _docs.clear()
-            _docs[key] = (sig, d)
-        if isinstance(d, dict):
-            yield p, d
+            _docs[key] = (sig, got)
+        if got is not None:
+            yield got
 
 
 # ── l'auteur d'un document qui ne le porte pas ──────────────

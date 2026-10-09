@@ -2387,9 +2387,12 @@ def _inventaire_luts():
     l'étagère du Montage. Les séquences sont des objets de la bibliothèque (le socle les
     compte) ; le Projet de chaque Workspace (montage/projet/) ne fait que les nommer."""
     from core import inventaire
-    for f, m in inventaire.json_docs(_luts_dir().glob("lut-*.json")):
-        yield {"id": f.stem, "title": m.get("title"), "owner": m.get("owner"), "space": m.get("space"),
-               "created": m.get("created"), "updated": m.get("created"), "open": "montage/", "sub": m.get("family") or ""}
+    return inventaire.json_docs(_luts_dir().glob("lut-*.json"), _inventaire_lut)
+
+
+def _inventaire_lut(f: Path, m: dict) -> dict:
+    return {"id": f.stem, "title": m.get("title"), "owner": m.get("owner"), "space": m.get("space"),
+            "created": m.get("created"), "updated": m.get("created"), "open": "montage/", "sub": m.get("family") or ""}
 
 
 def register(app) -> None:

@@ -12,7 +12,8 @@ Un LoRA est attaché à sa source : un moodboard (planche + objet). Son état, s
 (`<data>/lora/<planche>-<objet>.json`) :
 
   { id, board, node, name, model,
-    versions: [{ v, at, items: [ids], file, job, factice? }],   le dernier est l'actuel
+    versions: [{ v, at, items: [ids], file, job, by, factice? }],   le dernier est l'actuel ; by : son
+                                                                    auteur, celui du travail (09/10)
     plan: { at, model, items, owner, space } | null,             un entraînement prévu (la nuit)
     job: <id> | null }                                           l'entraînement en cours ou en file
 
@@ -663,18 +664,23 @@ def _inventaire():
     sinon de son plan de nuit. Un état sans version, ni plan, ni travail n'est rien encore."""
     from core import inventaire
     from tools import ideation
-    for f, s in inventaire.json_docs(_dir().glob("*.json")):
-        vs = [v for v in s.get("versions") or [] if isinstance(v, dict)]
-        plan = s.get("plan") if isinstance(s.get("plan"), dict) else {}
-        if not (vs or plan or s.get("job")) or not s.get("board"):
-            continue
-        first = vs[0] if vs else {}
-        yield {"id": s.get("id") or f.stem, "title": s.get("name") or "LoRA", "owner": first.get("by") or plan.get("owner"),
-               "job": first.get("job") or s.get("job"), "space": ideation.board_space(str(s["board"])),
-               "created": first.get("at") or plan.get("at"), "updated": vs[-1].get("at") if vs else plan.get("at"),
-               "open": f"ideation/#{s['board']}",
-               "sub": f"v{vs[-1].get('v')} · {(MODELS.get(vs[-1].get('model') or s.get('model')) or {}).get('name', '')}".rstrip(" ·")
-               if vs else "prévu"}
+    for r in inventaire.json_docs(_dir().glob("*.json"), _inventaire_fiche):
+        # le Workspace est celui de la planche : lu à chaque fois (core/library.py le garde avec elle)
+        yield {**r, "space": ideation.board_space(r["board"])}
+
+
+def _inventaire_fiche(f: Path, s: dict) -> dict | None:
+    vs = [v for v in s.get("versions") or [] if isinstance(v, dict)]
+    plan = s.get("plan") if isinstance(s.get("plan"), dict) else {}
+    if not (vs or plan or s.get("job")) or not s.get("board"):
+        return None
+    first = vs[0] if vs else {}
+    return {"id": s.get("id") or f.stem, "board": str(s["board"]), "title": s.get("name") or "LoRA",
+            "owner": first.get("by") or plan.get("owner"), "job": first.get("job") or s.get("job"),
+            "created": first.get("at") or plan.get("at"), "updated": vs[-1].get("at") if vs else plan.get("at"),
+            "open": f"ideation/#{s['board']}",
+            "sub": f"v{vs[-1].get('v')} · {(MODELS.get(vs[-1].get('model') or s.get('model')) or {}).get('name', '')}".rstrip(" ·")
+            if vs else "prévu"}
 
 
 def register(app) -> None:

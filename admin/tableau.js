@@ -19,7 +19,7 @@
 import { api, el, href, fmtDate, toast } from '../commun/shell.js';
 
 const PAGE = 30;
-const T = { d: null, at: 0, ver: 0, built: -1, q: '', found: null, qT: 0, person: null, open: {}, kinds: {}, err: '' };
+const T = { d: null, at: 0, every: null, ver: 0, built: -1, q: '', found: null, qT: 0, person: null, open: {}, kinds: {}, err: '' };
 let ctx = null;   // { head, render, go, isCal }
 
 const root = el('div', { class: 'tdb' });
@@ -54,27 +54,28 @@ export async function loadTableau(force = false) {
     const d = await api(`tableau${every ? '?toutes=1' : ''}`);
     T.d = d; T.at = Date.now(); T.err = ''; T.every = every;
     T.kinds = Object.fromEntries((d.kinds || []).map((k) => [k.id, k]));
-    // ce qui est déplié se relit avec (sa première page, son filtre)
-    await Promise.all(Object.keys(T.open).map((sid) => loadSpace(sid, T.open[sid].kind, 0, true)));
-    if (T.person) await loadPerson(T.person.uid, T.person.kind, 0, true);
+    // ce qui est déplié se relit avec (son filtre, autant de lignes qu'on en avait déroulé)
+    await Promise.all(Object.keys(T.open).map((sid) => loadSpace(sid, T.open[sid].kind, 0, true, T.open[sid].items.length)));
+    if (T.person) await loadPerson(T.person.uid, T.person.kind, 0, true, T.person.items.length);
     if (T.q) await chercherMaintenant(T.q, true);
   } catch (e) { T.err = e.message; }
   T.ver++;
 }
 
-async function loadSpace(sid, kind = '', offset = 0, quiet = false) {
+// `n` : combien de lignes relire d'un coup (un relevé garde ce qu'on avait déroulé, 500 au plus : la route)
+async function loadSpace(sid, kind = '', offset = 0, quiet = false, n = PAGE) {
   const o = T.open[sid] || (T.open[sid] = { kind: '', items: [], total: 0, counts: {}, busy: false });
   o.busy = true; o.kind = kind;
   try {
-    const d = await api(`tableau/espace/${encodeURIComponent(sid)}?${qs({ kind, limit: PAGE, offset })}`);
+    const d = await api(`tableau/espace/${encodeURIComponent(sid)}?${qs({ kind, limit: Math.min(500, Math.max(PAGE, n)), offset })}`);
     Object.assign(o, { items: offset ? [...o.items, ...d.items] : d.items, total: d.total, counts: d.counts, err: '' });
   } catch (e) { o.err = e.message; if (!quiet) toast(e.message); }
   o.busy = false;
 }
 
-async function loadPerson(uid, kind = '', offset = 0, quiet = false) {
+async function loadPerson(uid, kind = '', offset = 0, quiet = false, n = PAGE) {
   try {
-    const d = await api(`tableau/personne/${encodeURIComponent(uid)}?${qs({ kind, limit: PAGE, offset })}`);
+    const d = await api(`tableau/personne/${encodeURIComponent(uid)}?${qs({ kind, limit: Math.min(500, Math.max(PAGE, n)), offset })}`);
     const prev = T.person && T.person.uid === uid && offset ? T.person.items : [];
     T.person = { ...d, uid, kind, items: [...prev, ...d.items] };
   } catch (e) { if (!quiet) toast(e.message); else T.person = null; }
@@ -163,7 +164,7 @@ function wsBlock(sp) {
     ...list(o, { more: () => loadSpace(sp.id, o.kind, o.items.length).then(bump) }))];
 }
 
-function teamCard(t) {
+function tdbTeam(t) {
   // une Team dont un Workspace est déplié prend toute la largeur : sa liste a la place d'une ligne
   return el('div', { class: 'card tdb-team' + (t.archived ? ' off' : '') + (t.spaces.some((s) => T.open[s.id]) ? ' wide' : ''), 'data-team': t.id },
     el('div', { class: 'card-head' }, el('span', { class: 'nm' }, t.name),
@@ -193,7 +194,7 @@ function personView() {
       el('div', { class: 'card-head' }, el('span', { class: 'nm' }, p.name),
         p.gone ? el('span', { class: 'chip amb' }, 'compte supprimé') : null,
         el('span', { class: 'sp' }), el('span', { class: 'tdb-n' }, nb(P.total, 'objet', 'objets'))),
-      el('div', { class: 'cmeta' }, `${nb(P.spaces.length, 'workspace', 'workspaces')} · ${lastLine(P.last, true)}`),
+      el('div', { class: 'cmeta' }, `${nb(P.spaces.length, 'workspace', 'workspaces')} · `, ...[].concat(lastLine(P.last, true))),
       P.spaces.length ? el('span', { class: 'lbl' }, `les workspaces · ${P.spaces.length}`) : null,
       el('div', { class: 'tdb-wss' }, ...P.spaces.map((s) => el('a', { class: 'tdb-ws', href: href(`asset/?e=${encodeURIComponent(s.space)}#/w/${s.space}`),
         target: '_blank', rel: 'noopener', title: 'ce Workspace dans Asset (un nouvel onglet, dans ce Workspace)' },
@@ -223,8 +224,8 @@ function overviewView() {
     d.people.length ? el('span', { class: 'lbl' }, ctx.isCal() ? `les personnes · ${d.people.length}` : `qui crée dans tes Teams · ${d.people.length}`) : null,
     d.people.length ? el('div', { class: 'tdb-pps' }, ...d.people.map(personRow)) : null,
     el('span', { class: 'lbl' }, `les teams · ${d.teams.length}`),
-    el('div', { class: 'grid2 wide' }, ...full.map(teamCard),
-      d.orphans ? teamCard({ id: 'hors', name: 'Hors des Teams', total: d.orphans.total, last: d.orphans.last, spaces: d.orphans.spaces }) : null),
+    el('div', { class: 'grid2 wide' }, ...full.map(tdbTeam),
+      d.orphans ? tdbTeam({ id: 'hors', name: 'Hors des Teams', total: d.orphans.total, last: d.orphans.last, spaces: d.orphans.spaces }) : null),
     empty.length ? el('p', { class: 'adm-note tdb-empty' }, `${nb(empty.length, '« chez moi » sans rien', '« chez moi » sans rien')} : `,
       empty.map((t) => t.name).join(' · ')) : null];
 }
