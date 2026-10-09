@@ -20,7 +20,7 @@
 import { el, menu } from '../ui.js';
 import { FAMILLES, PATCHS_FM, harmoDuPatch, patchDeHarmo } from '../plaits/macro.js';   // les moteurs de Macro, par famille ; les patchs FM-6 (06/10)
 import { MODULES } from '../modules.js';
-import { filtre, icone as iconeFiltre } from './filtres.js';
+import { filtre, icone as iconeFiltre, A_FILTRE } from './filtres.js';
 import { ecran, s, trait, poignee, gestes, liaison, trace, choixLie, iconeOnde, plusProche, AIDE } from './surface.js';
 
 // les clés de l'enveloppe et la forme de ses segments
@@ -30,7 +30,7 @@ const ENV = {
   plaits: { a: 'attack', d: 'decay', s: 'sustain', r: 'release', forme: 'exp', tau: 0.35 },
   macro: { a: 'attack', d: 'decay', s: 'sustain', r: 'release', forme: 'exp', tau: 0.35 },   // son worklet : la même enveloppe que le Numérique
 };
-export const A_INSTRUMENT = (type) => ['synth', 'analog', 'plaits', 'acid', 'macro'].includes(type);
+export const A_INSTRUMENT = (type) => ['synth', 'analog', 'plaits', 'acid', 'macro', 'resonateur', 'physique'].includes(type);
 
 // ── l'enveloppe ─────────────────────────────────────────────
 // px(t) = K · ln(1 + t / T0) pour chaque segment ; la tenue a une largeur fixe
@@ -93,19 +93,22 @@ export function enveloppe(app, m, { w = 220, h = 96, L: lie = null } = {}) {
 }
 
 // Le moteur de Macro : 24 choix, un bouton qui ouvre le menu commun, rangé
-// par famille (plaits/macro.js, FAMILLES) — 24 boutons côte à côte ne tiennent pas
-function choixMoteur(L, sp) {
-  const b = el('button', { class: 'tb ghost sm ap-moteur', type: 'button', title: 'le moteur de Plaits (24)' });
-  const peindre = () => { b.textContent = `${sp.opts[Math.round(L.get('moteur'))] || ''} ▾`; };
+// par famille (plaits/macro.js, FAMILLES) — 24 boutons côte à côte ne tiennent pas.
+// 09/10 : le même bouton pour les douze modèles du Résonateur et ses onze accords.
+function choixMoteur(L, sp, { k = 'moteur', familles = FAMILLES, titre = 'le moteur de Plaits (24)' } = {}) {
+  const b = el('button', { class: 'tb ghost sm ap-moteur', type: 'button', title: titre });
+  const peindre = () => { b.textContent = `${sp.opts[Math.round(L.get(k))] || ''} ▾`; };
   b.onclick = () => {
-    const r = b.getBoundingClientRect(), cur = Math.round(L.get('moteur'));
-    menu(r.left, r.bottom + 4, FAMILLES.flatMap(([nom, a, z]) => [{ head: nom.toLowerCase() },
-      ...sp.opts.slice(a, z).map((o, j) => ({ label: o, checked: cur === a + j, onclick: () => { L.pose('moteur', a + j); L.fin(); peindre(); } }))]));
+    const r = b.getBoundingClientRect(), cur = Math.round(L.get(k));
+    menu(r.left, r.bottom + 4, familles.flatMap(([nom, a, z]) => [...(nom ? [{ head: nom.toLowerCase() }] : []),
+      ...sp.opts.slice(a, z).map((o, j) => ({ label: o, checked: cur === a + j, onclick: () => { L.pose(k, a + j); L.fin(); peindre(); } }))]));
   };
   L.ecoute(peindre);
   peindre();
   return el('div', { class: 'mu-choice ap-choix' }, el('span', { class: 'lbl' }, sp.label), b);
 }
+// les modèles de Rings : les six du module, puis son synthé de cordes caché et ses six effets (mutable/resonateur.js)
+const FAMILLES_RINGS = [['Le résonateur', 0, 6], ['Le synthé de cordes caché', 6, 12]];
 
 // Les moteurs FM-6 de Macro (2 à 4) : HARMO choisit l'un des 32 patchs DX7 de
 // la banque ; ce bouton les nomme (plaits/macro.js, PATCHS_FM). Ailleurs il se tait.
@@ -133,33 +136,41 @@ export function instrument(app, m, { accent = 'cy' } = {}) {
   // une seule liaison pour le module : les deux surfaces et les molettes se suivent
   const L = liaison(app, m);
   const def = MODULES[m.type];
-  const fl = filtre(app, m, { accent, w: m.type === 'acid' ? 300 : 240, h: 96, compact: true, L });
+  // le Résonateur et Physique (09/10) n'ont ni filtre ni enveloppe d'amplitude : leurs molettes seules
+  const fl = A_FILTRE(m.type) ? filtre(app, m, { accent, w: m.type === 'acid' ? 300 : 240, h: 96, compact: true, L }) : null;
   const en = ENV[m.type] ? enveloppe(app, m, { w: 200, h: 96, L }) : null;
   const mol = (k, i) => {
     const sp = def.params.find((p) => p.k === k);
     if (!sp) return null;
     if (m.type === 'macro' && k === 'moteur') return choixMoteur(L, sp);
+    if (m.type === 'resonateur' && k === 'modele') return choixMoteur(L, sp, { k, familles: FAMILLES_RINGS, titre: 'le modèle de Rings (12)' });
+    if (m.type === 'resonateur' && k === 'accord') return choixMoteur(L, sp, { k, familles: [['Les accords de Bryan Noll', 0, 11]], titre: 'l\'accord des cordes sympathiques et du synthé caché' });
     if (m.type === 'macro' && k === 'harmo') return el('div', { class: 'ap-macro-harmo' }, choixPatch(L), L.molette(k, { accent: i === 0 ? accent : 'cy' }));
     // une forme d'onde, un mode de filtre : leur dessin ; un modèle de Plaits : son nom
     const dessin = k === 'wave' ? (j, o) => iconeOnde(o) : k === 'fmode' ? (j) => iconeFiltre(['lowpass', 'bandpass', 'highpass'][j]) : null;
-    if (sp.opts) return choixLie(L, k, { dessin, apres: () => fl.peindre() });
+    if (sp.opts) return choixLie(L, k, { dessin, apres: () => fl?.peindre() });
     return L.molette(k, { accent: i === 0 ? accent : 'cy' });
   };
   const groupes = {
     analog: [['Oscillateur', ['wave', 'detune']], ['Filtre', ['cutoff', 'resonance', 'envAmount']], ['Enveloppe', ['attack', 'decay', 'sustain', 'release']], ['Sortie', ['gain']]],
     plaits: [['Oscillateur', ['modele', 'harmo', 'timbre', 'morph']], ['Filtre', ['fmode', 'cutoff', 'resonance', 'envAmount']], ['Enveloppe', ['attack', 'decay', 'sustain', 'release']], ['Sortie', ['gain']]],
     acid: [['Oscillateur', ['wave', 'glide']], ['Filtre', ['cutoff', 'resonance', 'envMod', 'decay', 'accent']], ['Sortie', ['gain']]],
-    macro: [['Moteur', ['moteur', 'harmo', 'timbre', 'morph', 'aux']], ['Porte basse', ['jeu', 'declin', 'couleur']], ['Filtre', ['cutoff', 'resonance']],
+    macro: [['Moteur', ['moteur', 'harmo', 'timbre', 'morph', 'aux']], ['Porte basse', ['jeu', 'declin', 'couleur']], ['Filtre', ['fmode', 'cutoff', 'resonance', 'envAmount']],
       ['Enveloppe', ['attack', 'decay', 'sustain', 'release']], ['Sortie', ['gain']]],
+    // Rings (mutable/resonateur.js) : ses quatre potentiomètres, son modèle, sa polyphonie, l'accord des cordes sympathiques
+    resonateur: [['Modèle', ['modele', 'poly', 'accord']], ['Résonateur', ['structure', 'brillance', 'amorti', 'position']], ['Sortie', ['largeur', 'gain']]],
+    // Elements (mutable/physique.js) : les trois excitateurs, le résonateur, l'espace
+    physique: [['Excitation', ['contour']], ['Archet', ['archet', 'archet_t']], ['Souffle', ['souffle', 'flux', 'souffle_t']], ['Frappe', ['frappe', 'maillet', 'frappe_t']],
+      ['Résonateur', ['resonateur', 'geometrie', 'brillance', 'amorti', 'position']], ['Sortie', ['espace', 'gain']]],
   }[m.type];
   groupes.push(['Arpège', ['arp', 'arp_div', 'arp_oct', 'arp_gate']]);   // 06/10 : arpege.js
-  const surfaces = el('div', { class: 'ap-duo' },
-    el('div', { class: 'ap-cadre-s' }, el('span', { class: 'lbl' }, m.type === 'acid' ? 'filtre · 18 dB/oct. · course de l\'enveloppe' : 'filtre · course de l\'enveloppe'), fl.el),
-    en ? el('div', { class: 'ap-cadre-s' }, el('span', { class: 'lbl' }, 'enveloppe d\'amplitude'), en.el) : null);
+  const surfaces = fl || en ? el('div', { class: 'ap-duo' },
+    fl ? el('div', { class: 'ap-cadre-s' }, el('span', { class: 'lbl' }, m.type === 'acid' ? 'filtre · 18 dB/oct. · course de l\'enveloppe' : 'filtre · course de l\'enveloppe'), fl.el) : null,
+    en ? el('div', { class: 'ap-cadre-s' }, el('span', { class: 'lbl' }, 'enveloppe d\'amplitude'), en.el) : null) : null;
   const reglages = el('div', { class: 'ap-groupes' }, groupes.map(([nom, ks]) => el('div', { class: 'ap-groupe' },
     el('span', { class: 'lbl' }, nom), el('div', { class: 'ap-kns' }, ks.map(mol)))));
   const root = el('div', { class: 'ap ap-instr' }, surfaces, reglages);
-  return { el: root, frame: () => {}, peindre: () => { fl.peindre(); en?.peindre(); } };
+  return { el: root, frame: () => {}, peindre: () => { fl?.peindre(); en?.peindre(); } };
 }
 
 // le Synthé du studio : ses sections (oscillateurs, filtre, enveloppe,

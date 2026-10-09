@@ -10,7 +10,8 @@
 // préréglages aussi, et « Enregistrer le réglage » garde celui de la source
 // dans le projet (navigateur, Préréglages, Les miens).
 
-import { toast, pick, href, dropZone } from '../commun/shell.js';
+import { toast, pick, href, dropZone, api } from '../commun/shell.js';
+import { listeBanques } from './banques.js';   // les banques d'échantillons du portail (09/10)
 import { MODULES, TRACK_KINDS, EFFECT_TYPES, DRUM_VOICES, RHYTHM_VOICES, SOURCES_OF, AUTOMATABLE, spec, val, fmt, presetsFor, moduleName } from './modules.js';
 import { peaks } from './moteur.js';
 import { CATEGORIES } from './prereglages.js';   // la banque de préréglages, par catégorie (06/10)
@@ -98,6 +99,7 @@ export function createDevices(app) {
     if (m.type === 'drums') box.append(devHead(m, t), drumBody(m, t, accent));
     else if (m.type === 'rythme') box.append(devHead(m, t), rhythmBody(m, t, accent));
     else if (m.type === 'sampler') box.append(devHead(m, t), samplerBody(m, t, accent));
+    else if (m.type === 'banque') box.append(devHead(m, t), banqueBody(m, t, accent));
     else if (m.type === 'player') {
       const n = S.proj.clips.filter((c) => c.track === t.id).length;
       box.append(devHead(m, t), el('div', { class: 'dev-body' },
@@ -217,6 +219,49 @@ export function createDevices(app) {
     dropZone(zone, { kinds: ['audio'], multiple: false, via: 'odio', onitems: ([it]) => setItem(it) });
     return el('div', { class: 'dev-body sampler' }, zone, cv,
       el('div', { class: 'kns' }, MODULES.sampler.params.map((p) => kn(m, p.k, p.k === 'root' ? accent : 'cy'))));
+  }
+
+  // LES ÉCHANTILLONS (09/10) : la banque se choisit dans un menu (celles que le
+  // portail a importées, par catégorie) ; dessous, d'où elle vient, sa licence et
+  // son crédit (Salamander est en CC-BY : son auteur est nommé), son état de
+  // chargement et ce qu'elle tient en mémoire. Sans banque installée, le bouton
+  // le dit, et dit comment en installer.
+  function banqueBody(m, t, accent) {
+    const bid = m.params.banque;
+    const bouton = el('button', { class: 'tb ghost sm ap-moteur', type: 'button' }, bid ? `${bid} ▾` : 'Choisir une banque ▾');
+    const credit = el('p', { class: 'bq-credit' }, bid ? '…' : '');
+    const etat = el('span', { class: 'bq-etat' }, '');
+    const poser = async (b) => {
+      m.params.banque = b.id;
+      if (!t.sub || t.sub === moduleName('banque')) t.sub = b.nom.slice(0, 60);
+      app.commit('graph');
+      etat.textContent = 'chargement…';
+      await app.engine.banque(b.id).catch((e) => toast(`${b.nom} : ${e.message}`));
+      render();
+    };
+    listeBanques(api).then((bs) => {
+      const b = bs.find((x) => x.id === bid);
+      if (b) {
+        bouton.textContent = `${b.nom} ▾`;
+        // une licence CC-BY demande le crédit de l'auteur : il dit déjà la source et la licence
+        credit.textContent = b.credit && b.licence.startsWith('CC-BY') ? b.credit : `${b.source} · ${b.licence}`;
+        etat.textContent = app.engine.banques.has(bid) ? `${b.zones} zones · ${Math.round((b.decode || 0) / 1e6)} Mo en mémoire` : 'chargement…';
+        if (!app.engine.banques.has(bid)) app.engine.banque(bid).then(() => { etat.textContent = `${b.zones} zones · ${Math.round((b.decode || 0) / 1e6)} Mo en mémoire`; }).catch((e) => { etat.textContent = e.message; });
+      } else if (bid) credit.textContent = 'cette banque n\'est pas installée sur ce portail';
+      if (!bs.length) {
+        bouton.disabled = true;
+        bouton.title = 'aucune banque installée : Cal les importe sur la machine du portail (python3 tools/echantillons.py importer tout)';
+        credit.textContent = 'aucune banque installée sur ce portail — elles s\'importent par tools/echantillons.py (docs/etudes/odio_synthes.md § 7)';
+      }
+      bouton.onclick = () => {
+        const r = bouton.getBoundingClientRect();
+        menu(r.left, r.bottom + 4, CATEGORIES.filter(([c]) => bs.some((b) => b.cat === c)).flatMap(([c, nom]) => [{ head: nom.toLowerCase() },
+          ...bs.filter((b) => b.cat === c).map((b) => ({ label: b.nom, sub: `${b.sub || b.source} · ${b.licence}`, checked: b.id === bid, onclick: () => poser(b) }))]));
+      };
+    }).catch((e) => { credit.textContent = `les banques ne se lisent pas : ${e.message}`; });
+    return el('div', { class: 'dev-body sampler banque' },
+      el('div', { class: 'snd' }, el('span', { class: 'lbl' }, 'banque'), bouton, etat), credit,
+      el('div', { class: 'kns' }, MODULES.banque.params.map((p) => kn(m, p.k, p.k === 'transpo' ? accent : 'cy'))));
   }
 
   // la forme d'onde d'un son (l'échantillonneur), sur <canvas>

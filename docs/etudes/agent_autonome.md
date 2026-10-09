@@ -1001,3 +1001,13 @@ d'LTX ; le classement BFCL à jour ; les articles arXiv en entier ; les skills d
 NVFP4 (`veille_1009.md`) ; les discussions N_PIPE_CHATBOT (§ 11) ; les études gardées sur le PC (`agent_brief.md`,
 `positionnement.md`, `modeles.md`, `pipeline_video.md`, `presentations.md`, `package_export.md` — REPRISE § 6) et
 `panneau_asset.md`.
+
+## Décisions de Cal (09/10, après-midi)
+
+Cal a tranché le 09/10 à 15 h 41 (la page de décisions, un choix par question) : **toutes les recommandations du § 10
+sont prises** — A1 (texte et routeur `qwen3:30b-a3b` sur DGX2, la vision sur DGX1), A2 (mesurer, puis un `keep_alive`
+court compté par l'ordonnanceur), A3 (le projet = le Workspace), A4 (le consentement par plan, coût affiché), A5 (la
+conversation libre et l'entrée de projet ensuite : lot 2), A6 (le même panneau dans chaque outil, après la mémoire :
+lot 3), A7 (LTX-2.5 et son Clean-Plate d'abord, le LoRA d'H3 ensuite), A8 (« Showrunner », tutoiement, sobre), A9 (32k),
+A10 (D1-D10 comme recommandé), A11 (tout en local), A12 (0 à 3 questions), E1 (vert dans le panneau : un seul orange par
+écran), R1 (les 7 intentions de la veille et les 3 de l'étude 3D entrent au registre). Lots 2 et 3 lancés le jour même.

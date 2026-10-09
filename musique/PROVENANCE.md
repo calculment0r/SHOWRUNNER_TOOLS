@@ -198,6 +198,9 @@ Ce qui change, marqué `SHOWRUNNER :` dans les fichiers repris :
 | clic droit sur un câble : `CableMenu.tsx` (deux entrées) | le menu commun du portail (`commun/menu.js`), les deux entrées d'ODIO_01 en tête ; chaque zone a le sien | « plus de clic droit du navigateur » (Cal, 29/09) |
 | le clavier reste au canvas dès qu'on y touche | T, G, F, Suppr et les touches du clavier désigné seul valent quand le dernier geste a eu lieu dans le canvas ; ailleurs, les lettres restent au clavier MIDI de la DAW | les deux conventions cohabitent |
 | `blocks/registry.ts` : la surface COMP trace `compressorCurve` (`effects/comp.ts` : genou quadratique centré sur le seuil, sans rattrapage), bornée à 0 dB | la courbe que le moteur applique : le `DynamicsCompressorNode` tel que Chromium le calcule (genou de `COMP_KNEE` dB qui commence au seuil) et son rattrapage automatique (spécification Web Audio), puis le gain du module — `appareils/calcul.js` `compresseur`, la loi de la vue Instruments ; sans butée à 0 dB (05/10) | la courbe dessinée est celle qu'on entend : l'ancienne s'écartait de 11 dB aux réglages par défaut de Comp, jusqu'à 24 dB ; la nouvelle suit la mesure à 0,002 dB (`docs/etudes/odio_appareils.md` § 5.2) |
+| `blocks/machines.ts` : `MACHINE_ENGINES` — FM-6, STRINGS-4 et POLY-6 sur le synthé soustractif (le FM-6 sans rien de branché), la MicroFreak sur les six oscillateurs de Plaits, le minilogue sur l'Analog | FM-6, STRINGS-4 et la MicroFreak sur Macro (Plaits complet : la FM à six opérateurs, la string machine, ses moteurs — `TYPES_MICROFREAK`), POLY-6 et le minilogue sur le Synthé du studio, chaque branchement commenté avec ce qui ne se branche pas (09/10) | la décision 3 de `docs/etudes/odio_synthes.md` (§ 7.1) : chaque machine sur son vrai moteur |
+| `tuiles.js` (écrit ici) : `VOIX_DES_PANNEAUX` posée APRÈS le branchement, des réglages d'un soustractif | posée AVANT, et seulement ce que le panneau ne porte pas (09/10) | la molette dit ce qu'on entend : l'ancienne voix écrasait la coupure que la molette du POLY-6 annonçait |
+| `plano/gabarit.ts` : les voix d'un gabarit (`VOIX_DE_GABARIT`), `notesIn` des trois mélodiques | et Macro, le Synthé, le Résonateur, Physique (09/10) | un gabarit de PLANO peut porter les vrais moteurs |
 
 **Non repris** : le compagnon de PLANO (appel à l'API d'Anthropic avec une
 clé), l'écriture sur GitHub, la page Morceaux (nos projets en tiennent lieu),
@@ -248,4 +251,66 @@ décision : `docs/etudes/odio_synthes.md` (§ 3.2, § 4.5).
 - `musique/plaits/macro.js` est écrit ici, sur le contrat des instruments
   d'ODIO (`odio/types.js`) : le worklet, l'enveloppe par voix, le passe-bas,
   la file des blocs de 24. Le principe du worklet en URL `data:` vient du
-  Numérique d'ODIO (`plaits-synth.js`).
+  Numérique d'ODIO (`plaits-synth.js`).  Le 09/10, le mode du filtre (LP, BP, HP) et son enveloppe paraphonique
+  rouverte à chaque note, comme le Numérique (`plaits-synth.js`) : la
+  MicroFreak joue sur Macro (`odio_synthes.md` § 7.1).
+
+# Provenance — `musique/mutable/` (le Résonateur et Physique : Rings et Elements, 09/10)
+
+Les instruments « Résonateur » et « Physique » jouent **Rings** (le résonateur)
+et **Elements** (la voix de modélisation physique) d'Émilie Gillet (Mutable
+Instruments). Étude, mesures, décisions : `docs/etudes/odio_synthes.md` § 7.2.
+
+- **Sources**, prises aux commits fixés par `tools/mutable_wasm/construire.sh` :
+  `pichenettes/eurorack` @ `08460a69a7e1f7a81c5a2abcc7189c9a6b7208d4` (celui de
+  Plaits), les dossiers `rings/dsp/`, `elements/dsp/` et leurs `resources.*` ;
+  `pichenettes/stmlib` @ `d18def816c51d1da0c108236928b2bbd25c17481`.
+- **Licence MIT.** Les 28 fichiers de Rings et les 23 d'Elements portent la
+  notice MIT (« Copyright 2015 / 2014 Emilie Gillet »), vérifiée par le script,
+  qui refuse un fichier sans elle ; le README du dépôt : « Code (STM32F
+  projects): MIT license ». Les données d'Elements (les échantillons de ses
+  excitateurs, `elements/resources.cc`) sont sous la même notice. Les notices
+  sont reproduites dans `musique/mutable/LICENSE-mutable.txt`. Les tests
+  (`rings/test/rings_test.cc`, `elements/test/elements_test.cc`, GPL-3) ne sont
+  **pas** utilisés.
+- **Le nom.** Le README du dépôt : « Mutable Instruments is a registered
+  trademark […] We do not recommend you to keep the original name of the
+  Mutable Instruments module for your derivative works. » Les instruments
+  s'appellent Résonateur et Physique ; Rings et Elements ne sont nommés que
+  comme leur provenance.
+- **Ce qui est écrit ici** (`tools/mutable_wasm/`) : deux en-têtes vides
+  (`<cstdio>`, `elements/drivers/debug_pin.h`, inclus sans être appelés) ; la
+  chaîne de Plaits pour le reste (`tools/plaits_wasm/shim`, `sr_math.cc`), son
+  `<algorithm>` reçoit `rotate` et `reverse` (Plaits se recompile à l'octet
+  près) ; `sr_rings.cc` (quatre `rings::Part` et le `StringSynthPart`, un
+  tampon de réverbe chacun) et `sr_elements.cc` (quatre `elements::Part`) ;
+  un plancher de bruit à −300 dBFS dans leurs entrées audio, contre les nombres
+  dénormaux (l'étude le mesure). **Rien n'est changé dans les sources.**
+- **Le résultat** : `rings.wasm` (65 Ko) et `elements.wasm` (405 Ko), SIMD 128
+  bits, aucune importation, servis par le portail.
+- `resonateur.js`, `physique.js`, `worklet.js` sont écrits ici, sur le contrat
+  des instruments d'ODIO (comme `plaits/macro.js`) ; la file rééchantillonnée
+  (un sinus cardinal fenêtré de Blackman) est écrite ici.
+
+# Provenance — les banques d'échantillons (09/10)
+
+Aucun son n'est dans le dépôt : `tools/echantillons.py` les télécharge et les
+importe dans les données du portail (`<data_dir>/echantillons/`), qui les sert
+(`server/tools/music_banques.py`). Étude : `docs/etudes/odio_synthes.md` § 7.3.
+
+| source | où, quel commit | licence (lue) | ce qu'on en prend |
+|---|---|---|---|
+| **VCSL**, Versilian Community Sample Library (Versilian Studios LLC) | `sgossner/VCSL`, branche `sfz` @ `dfcf4a4918771eee884b96ad4493de82ef84daf6` (23/12/2020) | **CC0 1.0** (`LICENSE` ; README : « Essentially it's Public Domain […] no credit, no special terms ») | 19 instruments : leurs sons, et la cartographie SFZ publiée par l'éditeur (générée par l'outil de Peter Eastman, CC0, son README) ; le crédit est écrit quand même dans chaque banque |
+| **Salamander Grand Piano V3**, Alexander Holm | `sfzinstruments/SalamanderGrandPiano` @ `3382bf9496bba2486f5ab0de55a264d1dfc38404` (03/01/2022) ; l'original : archive.org/details/SalamanderGrandPianoV3 | **CC-BY 3.0** (`LICENSE` du dépôt ; README : « Author: Alexander Holm ») | trois couches de vélocité sur seize, la cartographie SFZ de kinwie ; le crédit (l'auteur, la licence, l'original, la cartographie) est écrit dans la banque et montré dans le rack |
+
+- **Les lois du lecteur** (`musique/banques.js`) sont celles de **sfizz**
+  (`sfztools/sfizz` @ `f5c6e29f23b8057867c08e88f5f6ac6738baa30b`, licence
+  BSD-2) : le suivi de vélocité (`src/sfizz/RegionStateful.cpp`,
+  `velocityCurve`), les fondus de vélocité (`src/sfizz/ModifierHelpers.h`,
+  `crossfadeIn`, `crossfadeOut`, la courbe « power » par défaut de
+  `Defaults.cpp`), le tour des régions. Les formules sont lues et réécrites en
+  JavaScript ; aucun code n'est repris.
+- **Le format SFZ** (`music_banques.lire_sfz`) est lu ici, sur ce que les deux
+  cartographies emploient (`<control> <global> <master> <group> <region>`,
+  `#define`, `#include`) ; ce qu'il ne lit pas (les commandes ARIA, la pédale,
+  les relâchements) est écarté à l'import et dit par le script.

@@ -438,8 +438,8 @@ export, écoute, nodal, jouets, arpège.
 |---|---|---|
 | 1 | **Garder Macro** (Plaits complet, 24 moteurs, MIT, 207 Ko), fait sur cette branche (§ 4.5) ? Il est à côté du Numérique, qui garde ses six oscillateurs pour les projets qui l'ont | **Oui**, après écoute. C'est le plus grand gain pour l'oreille, à licence sûre. Le script de compilation, sa colle et la notice MIT sont versionnés |
 | 2 | **Où est l'étude** des synthés à préréglages : ODIO_01 (le bouton des sons par machine) ou le PC ? | La mettre dans `docs/etudes/`, ou autoriser la lecture d'ODIO_01 à la session suivante. Ses choix se reprendront dans la banque |
-| 3 | **Les machines du nodal** sur leurs vrais moteurs : FM-6 sur la FM-6 de Macro, STRINGS-4 sur sa string machine, la MicroFreak sur ses moteurs | **Oui**, après la décision 1 et une écoute. Aujourd'hui le FM-6 est un soustractif. C'est `MACHINE_ENGINES` (`machines/blocks/machines.js`) et `TYPE_DE_VOIX` (`machines/tuiles.js`) |
-| 4 | **Des échantillons** (piano, cordes, General MIDI) | **VCSL (CC0)** d'abord, puis Salamander (CC-BY, auteur cité). Servis depuis la bibliothèque du portail : ni dans le dépôt, ni depuis un CDN tiers. Lecteur : l'échantillonneur, étendu à plusieurs zones |
+| 3 | **Les machines du nodal** sur leurs vrais moteurs : FM-6 sur la FM-6 de Macro, STRINGS-4 sur sa string machine, la MicroFreak sur ses moteurs | **Fait le 09/10** (§ 7.1), avec le POLY-6 et le MINILOGUE XD sur le Synthé du studio ; reste l'écoute de Cal |
+| 4 | **Des échantillons** (piano, cordes, General MIDI) | **Fait le 09/10** (§ 7.3) : un lecteur de banques (l'instrument Échantillons), VCSL (CC0) et Salamander (CC-BY, l'auteur cité), servis par le portail ; **reste à Cal** : lancer l'import sur DGX2 (`python3 tools/echantillons.py importer tout`) |
 | 5 | **La GPL** (Surge, Vital, Dexed, Odin, Helm, TAL) | **Non.** Le dépôt est public sans licence ; ne pas l'y soumettre. Ce qu'ils apportent existe sous MIT ou Apache (Plaits, msfa) |
 | 6 | **« Les miens »** suivent le projet aujourd'hui. Les rendre personnels, pour les retrouver dans tous ses projets ? | **Oui** : une préférence par personne (`/api/prefs`, un schéma `musique/prefs.json`). Cela touche les préférences du portail, d'où la question |
 | 7 | **L'écoute au survol** | La laisser éteinte par défaut ; le clic sur ▶ suffit |
@@ -494,7 +494,280 @@ export, écoute, nodal, jouets, arpège.
     enveloppes internes sont 8,8 % plus lentes ;
   - sa sortie est en 16 bits, comme le module ;
   - il demande le SIMD de WebAssembly : Chrome 91, Firefox 89, Safari 16.4 ;
-  - le nodal ne lui donne pas encore de facettes pour les attracteurs
-    (`machines/influence.js`).
+  - ~~le nodal ne lui donne pas encore de facettes pour les attracteurs~~
+    — fait le 09/10 : ses réglages déclarent leur sorte (timbre et coupure :
+    brillance ; harmo, morph, aux, couleur, enveloppes : matière), et son
+    AudioWorklet prend l'opérateur à son heure (`musique_odio01.md` § 6).
 - **La DR-9 et la boîte à rythme** pourraient aussi jouer les percussions de
   Plaits (grosse caisse, caisse claire, charley de Macro).
+
+## 7. Fait le 09/10 : les meilleurs moteurs
+
+Branche `wip3/odio-moteurs`. La demande de Cal, mot pour mot : « je pense
+qu'on n'a pas encore intégré dans ODIO des moteurs de son qui sont les
+meilleurs ; on avait pourtant relancé une mise à jour mais je crois que tu
+ne l'as pas faite ». Il avait raison : les décisions 3 et 4 étaient restées
+des recommandations.
+
+**En bref.**
+
+- **Les machines du nodal jouent leurs vrais moteurs** (§ 7.1) : FM-6 la FM à
+  six opérateurs de Plaits et ses patchs DX7, STRINGS-4 sa string machine, la
+  MicroFreak les moteurs de Plaits (sept des siens en viennent), POLY-6 et
+  MINILOGUE XD le Synthé du studio (17 commandes branchées chacun au lieu de 3
+  et 10). Un projet d'avant migre à l'ouverture.
+- **Rings et Elements**, de la même autrice et sous la même licence MIT que
+  Plaits, compilés en WebAssembly de la même façon (§ 7.2) : deux instruments
+  neufs, le **Résonateur** (Rings : modal, cordes sympathiques, corde, voix FM,
+  corde et réverbe, et son synthé de cordes caché) et **Physique** (Elements :
+  archet, souffle, frappe, et un résonateur modal ou à cordes). 21 préréglages.
+- **Les échantillons** (§ 7.3) : un lecteur de banques dans le moteur (zones de
+  notes et de vélocités, fondus, tours, boucles, enveloppe), aux lois de
+  sfizz ; VCSL et Salamander, importés par un script que Cal lance sur DGX2,
+  servis par le portail. Essayé ici sur six zones de trois banques.
+- **Rien n'a été écouté** : tout est mesuré (niveaux, spectres, ni silence ni
+  écrêtage, coût dans Chromium). Le goût est à Cal.
+
+### 7.1 Les machines : moteur d'avant → moteur juste
+
+L'inventaire des treize planogrammes (`machines/blocks/machines.js`,
+`MACHINE_ENGINES` ; `machines/tuiles.js`, `TYPE_DE_VOIX`) :
+
+| machine | avant | maintenant | commandes branchées | pourquoi |
+|---|---|---|---|---|
+| **FM-6** | l'Analog (un soustractif !), rien de branché | **Macro, FM-6 · banque 2** | 0 → 3 | la machine d'une FM à six opérateurs |
+| **STRINGS-4** | l'Analog, le volume seul | **Macro, string machine** (accord d'octave) | 1 → 6 | « String machine emulation with stereo filter and chorus » |
+| **MICROFREAK** | le Numérique (les six oscillateurs de Plaits) | **Macro** (ses moteurs) | 12 → 12 | ses types d'oscillateur sont, pour sept d'entre eux, les moteurs mêmes de Plaits |
+| **POLY-6** | l'Analog, coupure, résonance, volume | **le Synthé** du studio | 3 → 17 | un DCO à sous-oscillateur et bruit, un LFO à délai, une ADSR, un chorus : le Synthé a tout cela, l'Analog non |
+| **MINILOGUE XD** | l'Analog (2 oscillateurs, UNE enveloppe) | **le Synthé** | 10 → 17 | deux VCO réglables chacun, deux enveloppes (amplitude et filtre), un LFO |
+| ACID-3 | la Basse acide | inchangé | 8 | déjà juste (une 303) |
+| TR-8S | la Boîte à rythme | inchangé | 46 | déjà juste (onze voix, deux circuits) |
+| TAPE-3, PLATE-24, VARIMU-70 | RTT-01, Réverbe, Comp | inchangés | 4, 3, 4 | des effets, déjà sur les leurs |
+| KBD-01, SEQ-01, INTERACTIONS | sans son | — | — | émetteurs de notes, démonstration |
+
+**Ce qui se branche, et d'où vient la règle.**
+
+- **FM-6** : la documentation de Plaits 1.2 (`firmware.md` du dépôt de
+  documentation, `pichenettes/mutable-instruments-documentation` @ `14d04a7`) :
+  « 2-voice, 6-operator FM synth with 32 presets (HARMO: preset selection,
+  TIMBRE: modulator(s) level, MORPH: envelope and modulation
+  stretching/time-travel) ». D'où : le bouton **algo** (32 crans) choisit le
+  patch (un patch DX7 porte son algorithme) ; **retour** règle TIMBRE (à sa
+  place de départ, 0,3, les modulateurs du patch : 0,5) ; **r2** règle MORPH à
+  rebours (`fm/voice.h` : MORPH sous 0,5 accélère les enveloppes). Les rapports,
+  niveaux et désaccords par opérateur ne se branchent pas : Plaits les lit
+  dans le patch.
+- **STRINGS-4** : même source, « String machine (HARMO: chord, TIMBRE:
+  chorus/filter amount, MORPH: waveform) ». Le registre de 4' règle MORPH sur
+  la moitié des onze registrations du moteur (`string_machine_engine.cc` : de
+  la scie seule aux mélanges de scies et de carrés) ; la profondeur de
+  l'ensemble règle TIMBRE de 0,5 à 1 (le chorus et le filtre ouvert) ;
+  l'attaque, la chute, la tenue, le volume vont à l'enveloppe de Macro.
+- **MICROFREAK** : son type d'oscillateur parcourt ses douze modes, dans
+  l'ordre de son panneau. Arturia a repris sept modèles de Plaits (V. Analog,
+  Waveshaper, Two Op FM, Formant, Chords, Speech, Modal : Sound On Sound et
+  CDM, 2019 ; le site d'Arturia est bloqué dans le conteneur, non lu) : ils
+  jouent les moteurs mêmes. Ses cinq modes à elle (Basic Waves, Superwave,
+  Wavetable, Harmonic, Karplus Strong) prennent leur plus proche voisin dans
+  Plaits (VA filtré, essaim, table d'ondes, additif, corde) — ce n'est pas
+  leur code, c'est dit (`TYPES_MICROFREAK`). Pour elle, Macro a reçu le mode
+  du filtre (LP, BP, HP) et une enveloppe de filtre paraphonique (celle du
+  Numérique) : à leurs défauts, Macro sonne comme avant.
+- **POLY-6, MINILOGUE XD** : leurs commandes vont aux réglages du Synthé de
+  même sens (`machines.js`, les commentaires disent chaque branchement et ce
+  qui ne se branche pas : la largeur d'impulsion, le coupe-bas, la cible du
+  LFO du minilogue, son moteur multiple…). Le chorus du POLY-6 devient les
+  copies désaccordées de l'oscillateur (« ensemble ») : un choix, dit.
+
+**La voix propre d'un panneau** (`VOIX_DES_PANNEAUX`) ne règle plus que ce
+que le panneau ne porte pas (le moteur de Plaits, la banque, l'accord, une
+forme), posée AVANT le branchement : chaque molette dit ce qu'on entend
+(avant, elle écrasait la coupure que la molette annonçait).
+
+**Les projets d'avant** : à l'ouverture (`projet.js`, `migrerMachines`), une
+machine dont le module n'est pas celui de sa voix en change, repart de la voix
+de son panneau et de ses commandes ; l'arpège est gardé. Le pilote l'essaie
+(un FM-6 sur l'Analog devient Macro, banque 2, le patch de son bouton).
+
+Placées dans le nodal, leurs phrases de départ crêtent à : FM-6 -7,7,
+STRINGS-4 -10,3, POLY-6 -9,5, MINILOGUE -9,3, MicroFreak -25,9 dBFS (ses
+réglages de départ : le mode additif, la coupure à 1,2 kHz ; sa molette de
+volume le dit). Les gabarits de PLANO proposent les nouvelles voix.
+
+### 7.2 Rings et Elements en WebAssembly
+
+**Les sources** : `pichenettes/eurorack` au commit de Plaits (`08460a6`),
+dossiers `rings/` et `elements/` ; `stmlib` @ `d18def8`. **Licence MIT** :
+les 28 fichiers de Rings (`dsp/` et `resources.*`) et les 23 d'Elements
+portent la notice, vérifiée par le script, qui refuse un fichier sans elle ;
+le README du dépôt : « Code (STM32F projects): MIT license ». Leurs tests
+(`rings_test.cc`, `elements_test.cc`) sont en GPL-3 : pas pris. Le README
+demande aussi de ne pas garder le nom des modules pour un dérivé : nos
+instruments s'appellent Résonateur et Physique.
+
+**La compilation** (`tools/mutable_wasm/construire.sh`) reprend la chaîne de
+Plaits (clang 18, sans bibliothèque C, ses `shim/` et son `sr_math.cc`) ;
+deux en-têtes vides de plus, et `std::rotate` au `<algorithm>` (Plaits se
+recompile à l'octet près). `rings.wasm` 65 Ko, `elements.wasm` 405 Ko (les
+échantillons de ses excitateurs), aucune importation. Rien n'est changé dans
+les sources.
+
+**Les nombres dénormaux.** Rendu sous node puis en natif : une voix de Rings
+coûtait 2 % d'un cœur, puis 30 à 50 % quelques secondes après la note ; avec
+le mode « flush to zero » du processeur (en natif), 1,9 %. Les filtres des
+modes descendent sous le plus petit flottant normal ; un x86 calcule ces
+nombres cent fois plus lentement, le Cortex-M4 du module non, et WebAssembly
+ne sait pas les mettre à zéro. Le remède, sans toucher aux sources : les
+entrées audio des modules (IN de Rings, BLOW et STRIKE d'Elements) reçoivent
+un bruit à −300 dBFS (le plancher d'un vrai convertisseur est 150 dB plus
+haut). Un Part polyphonique de Rings ne donne à ses voix muettes que du
+silence (`part.cc`) : on tient quatre Part à la polyphonie 1 (60 modes
+chacun au lieu de 28 ou 12), à tour de rôle comme le module. Mesuré : stable
+sur 30 s.
+
+**Les instruments** (`musique/mutable/`) suivent le contrat d'ODIO :
+
+- une **file rééchantillonnée** (`worklet.js`) : le module compte à SA
+  fréquence (Rings 48 kHz, Elements 32 kHz), un sinus cardinal fenêtré la
+  ramène à celle du contexte (la hauteur et les temps du module, à toute
+  fréquence ; à fréquence égale, une copie). Mesuré dans Chromium : la3 à
+  220,2 Hz à 48 kHz, 220,5 Hz à 44,1 kHz, niveaux identiques ;
+- **sortie stéréo** : les sorties ODD/EVEN de Rings (LARGEUR les resserre),
+  les deux d'Elements (son ESPACE) ;
+- **Rings** n'a pas de porte : chaque note frappe l'excitateur, la résonance
+  s'éteint selon AMORTI ; la vélocité règle le niveau de la voix frappée ;
+- **Elements** : la note tenue est sa porte (l'archet et le souffle durent),
+  la vélocité son entrée STRENGTH ; quatre modules, une note chacun ;
+- les potentiomètres lissés comme les modules les lisent (1 % par bloc) ;
+  un réglage daté (un attracteur, une automation) tombe à son heure ;
+- une voix qui ne s'entend plus (−100 dBFS une demi-seconde) cesse d'être
+  calculée.
+
+**Le coût**, dans Chromium (rendu de 10 s, le meilleur de deux, la part d'un
+cœur du conteneur ; mesuré sous forte charge — moyenne de charge 15 sur 4
+cœurs, d'autres agents tournaient : les écarts entre lignes comptent plus que
+les valeurs) :
+
+| instrument | 0 voix | 1 voix | 4 voix | par voix |
+|---|---|---|---|---|
+| Résonateur, modal | 0,62 % | 1,72 % | 6,19 % | 1,4 % |
+| Résonateur, corde | 0,35 % | 0,84 % | 2,29 % | 0,5 % |
+| Résonateur, cordes sympathiques | 0,34 % | 2,06 % | 6,86 % | 1,6 % |
+| Physique, frappe (modal) | 0,68 % | 2,26 % | 6,08 % | 1,4 % |
+| Physique, archet (modal) | 0,90 % | 1,75 % | 6,18 % | 1,3 % |
+| Macro, modal (pour comparer) | 0,16 % | 1,17 % | 2,77 % | 0,7 % |
+| Macro, FM-6 | 0,12 % | 0,97 % | 3,14 % | 0,8 % |
+
+**Les préréglages** (`prereglages.js`) : 12 du Résonateur, 9 de Physique,
+chacun rendu par l'écoute et réglé pour que sa phrase crête à −8 dBFS
+(mesuré : −8,3 à −7,9). Le `trim` de l'adaptateur en vient : +8 dB pour le
+Résonateur (ses résonances sortent bas), −6 dB pour Physique.
+
+| préréglage | crête | RMS des parties qui sonnent | centroïde | écart G/D |
+|---|---|---|---|---|
+| Résonateur · Cloche modale | −7,9 | −24,6 | 9 228 Hz | −1,8 dB |
+| Résonateur · Lame de bois | −8,0 | −24,6 | 986 Hz | −1,8 dB |
+| Résonateur · Corde pincée | −7,9 | −32,1 | 2 938 Hz | −4,6 dB |
+| Résonateur · Basse pincée | −8,0 | −33,5 | 357 Hz | −3,9 dB |
+| Résonateur · Cordes cachées | −8,0 | −24,4 | 6 558 Hz | −2,1 dB |
+| Physique · Archet | −8,0 | −25,7 | 405 Hz | +1,7 dB |
+| Physique · Souffle | −8,1 | −21,0 | 4 702 Hz | −8,3 dB |
+| Physique · Bol frappé | −8,0 | −21,4 | 8 271 Hz | −5,2 dB |
+| Physique · Tambour | −7,9 | −23,9 | 3 383 Hz | −30,5 dB |
+
+Aucun silence, aucun NaN. La voix cachée d'Elements reste un choix de son
+résonateur, sans préréglage : −31,7 dBFS à gain 0,5, trop faible.
+
+### 7.3 Les échantillons
+
+**Le lecteur** (`musique/banques.js`, `moteur.js` SRC.banque) : l'instrument
+« Échantillons » (sorte `banque`, sur les pistes Échantillonneur). Une banque
+est la cartographie SFZ de son auteur, aplatie en zones ; une note fait sonner
+les zones qui la couvrent, chacune à sa hauteur, depuis son départ, en boucle
+si elle en a, avec son enveloppe. Les lois, lues dans **sfizz** (le lecteur SFZ
+libre de référence, BSD-2, `sfztools/sfizz` @ `f5c6e29` ; formules reprises,
+pas de code) : le tour (`seq_length`/`seq_position`), le niveau selon la
+vélocité g = 1 − t(1 − v²) (`RegionStateful.cpp`), les fondus de vélocité en
+racine carrée (`ModifierHelpers.h`). Ses réglages déplacent ce que la banque
+dit : transposition, accord fin, attaque et chute multipliées, dynamique (le
+suivi de vélocité), volume, l'arpège.
+
+**Le portail** (`server/tools/music_banques.py`) sert ce qui est dans
+`<data_dir>/echantillons/` : la liste, le manifeste (validé), le son d'une
+zone. C'est commun au portail, comme les polices. Rien dans le dépôt, rien
+depuis un tiers.
+
+**L'import** (`tools/echantillons.py`, à lancer par Cal sur DGX2) :
+
+- **VCSL** (Versilian Studios, CC0 1.0) : sa branche `sfz` @ `dfcf4a4`, où
+  l'éditeur publie la cartographie SFZ de chaque instrument ; 19 banques
+  (pianos droit et à queue, clavecin, piano FM, deux orgues, vibraphone,
+  marimba, xylophone, glockenspiel, cloches tubes, harpe, kalimba, dan tranh,
+  saxophone ténor, flûte à bec, harmonica, verres, timbales) ;
+- **Salamander Grand Piano V3** (Alexander Holm, CC-BY 3.0 ; sa cartographie
+  SFZ par kinwie, `sfzinstruments/SalamanderGrandPiano` @ `3382bf9`) : trois
+  couches de vélocité sur seize (la 6e, la 11e, la 16e : chacune prend les
+  vélocités des couches retirées sous elle), la chute d'une seconde et le
+  suivi de vélocité de 73 % que son SFZ et son README donnent. Le crédit est
+  dans la banque, et le rack le montre.
+- un clone partiel : seuls les fichiers d'une banque se téléchargent ; chaque
+  son en FLAC 16 bits à 48 kHz, sa queue coupée à 3 à 8 s (selon la banque)
+  avec un fondu.
+
+**Ce que ça pèse** : `python3 tools/echantillons.py taille` le lit dans l'API
+de GitHub (bloquée ici, non essayée). Mesuré sur l'essai : un son de VCSL
+pèse 2 à 4 Mo en WAV (le piano droit : 71 sons, ≈ 280 Mo à télécharger ;
+son README annonce 20 à 75 Mo par instrument pour la plupart), un son de
+Salamander 1,5 à 1,8 Mo en FLAC 24 bits (90 sons gardés : ≈ 150 Mo). Après
+conversion, ≈ 0,25 Mo par son sur le disque (8 s). **Dans l'onglet**, un son
+de 8 s décodé en flottants stéréo tient 3 Mo : le piano droit ≈ 220 Mo,
+Salamander ≈ 280 Mo (le manifeste le dit, `decode`, et le rack aussi). C'est
+la limite de la méthode : une banque se charge entière dès qu'une piste la
+prend.
+
+**Essayé ici** : six zones de trois banques (piano droit, vibraphone,
+Salamander), importées par le script (24 s). La hauteur de chaque son, mesurée
+(YIN), est la clé que sa cartographie donne (do4 : 261,7 Hz). Dans Chromium,
+trois vélocités d'une même note : −26, −13, −4,6 dBFS ; le préréglage d'un
+clavier crête de −9 à −12 dBFS. Une note hors des zones ne sonne pas (la règle
+de SFZ).
+
+**Le rack** choisit la banque dans un menu par catégorie (celles que le
+portail a importées), dit sa source, sa licence ou son crédit, et ce qu'elle
+tient en mémoire ; sans banque installée, le bouton est éteint et dit comment
+en installer. Chaque banque installée devient un préréglage du navigateur, qui
+s'écoute.
+
+### 7.4 Vérifié
+
+- `musique/pilote_moteurs.mjs` (portail d'essai neuf, deux thèmes) : 26
+  contrôles, tout passe — trois pistes neuves exportées (Résonateur −3,9,
+  Physique −8,4, Échantillons −12 dBFS, aucun NaN), leurs vues, les cinq
+  machines sur leurs moteurs, la migration, le navigateur et son écoute.
+- `check.py music music_jouets music_banques` : 102 contrôles ;
+  `music_banques` en ajoute 14 (le SFZ, la liste, le manifeste, un son, les
+  chemins refusés, un manifeste abîmé écarté).
+- `music_moteurs` (11 contrôles, sous node, sans navigateur) : les deux
+  modules se servent, s'instancient sans importation, jouent la3 à sa hauteur
+  sans NaN ni écrêtage ; **la garde des dénormaux** — le coût des secondes où
+  la résonance s'éteint, contre une seconde sans note : 2 à 3 fois avec le
+  plancher de bruit, 100 fois sans lui (essayé sur une compilation sans
+  plancher : la garde échoue, comme il faut) ; les lois des banques (le suivi
+  de vélocité, les fondus, le tour, une note hors des zones, le rapport).
+- `check.py` complet : **3 896 passés, 0 échec** (avec `music_moteurs`).
+
+### 7.5 Ce qui reste
+
+- **L'écoute de Cal** : les machines, les 21 préréglages, les banques.
+- **L'import sur DGX2** (`python3 tools/echantillons.py taille`, puis
+  `importer tout` ; `--essai 6` pour voir d'abord).
+- **La mémoire des banques** : une banque se charge entière ; charger
+  seulement les zones que le projet joue (ses notes, son arpège) est la
+  suite, si Cal trouve l'onglet lourd.
+- Les **releases** des pianos (le bruit des marteaux au relâchement), les
+  **commandes** SFZ (pédale, keyswitch) : écartées à l'import, et dites.
+- Macro rééchantillonne-t-il comme Rings et Elements ? Il corrige encore la
+  note hors de 48 kHz (ses temps glissent de 8,8 % à 44,1 kHz) : la file de
+  `mutable/worklet.js` le ferait juste.
+- Rings et Elements comme **effets** (un son du projet dans leur entrée IN,
+  ce qu'ils font sur le module) : pas fait.
