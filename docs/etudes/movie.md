@@ -287,3 +287,59 @@ Réglages lus : `movie_engine` (`factice` | `h3`), `movie_stub_step_s`,
 `h3_min_free_gb`, `h3_idle_minutes`, `h3_service`, `h3_neighbour_port`.
 Paramètres d'URL : `?mode=t2v|i2v|r2v`, `?start=<image>`, `?ref=<id>`,
 `#<vidéo>` (ou `?id=<vidéo>`) l'ouvre en grand, `?view=cmp&a=<id>&b=<id>`.
+
+## 9. Fait le 09/10 — l'expérience
+
+Cal, 09/10 : « pourquoi dans H3 on a le format (carré, 16:9 etc.) dans les paramètres avancés ? ce n'est pas
+logique… on veut aussi pouvoir facilement faire plusieurs résolutions et même des plus faibles… pourquoi on ne peut
+pas drag drop des éléments depuis la bibliothèque accordéon dans la zone des références… le multishot ne va pas car
+on ne peut pas drag and drop les éléments ou références dedans car il est en pop-up… très compliqué, trop de texte
+partout, les infos les plus importantes sont mal hiérarchisées… Je n'arrive pas à modifier les longueurs de plan par
+leurs handles sur la timeline. »
+
+### 9.1 L'état des lieux (la page du 08/10, relue et essayée en portail d'essai)
+
+Le parcours d'un plan en Références, de haut en bas de la colonne de gauche (350 px) : la carte du modèle (un grand
+« H3 » en filigrane, le moteur), les trois modes en tuiles, le cadre Entrées (une zone de dépôt, puis une phrase de
+quatre lignes sur les jetons), la carte Prompt (un compteur « 0 mot · visé 350–500 », l'intitulé
+« Ce qu'on voit et entend · detailed_description », un champ de six lignes, Son, Musique, cinq aides en puces), la
+carte Préréglage (deux boutons à trois lignes de texte chacun, une note de trois lignes, le curseur de durée), puis
+« Réglages avancés » replié — et c'est là, sous le profil de la recette, qu'étaient **le format et la toile**.
+« Générer » au pied, avec les blocages en capitales orange et une phrase sur le fil.
+
+- **Caché** : le format et la résolution (dans l'avancé, sous « Toile », derrière une famille puis une ligne) ; le
+  temps de chaque toile ; ce que le modèle reçoit (le prompt envoyé, en bas de l'avancé).
+- **Trop bavard** : chaque bloc porte sa phrase d'aide (Entrées, Préréglage, Durée, Comparer…), les deux préréglages
+  répètent leur note, le pied répète que le rendu paraît dans le fil ; le modèle a une carte entière alors qu'il n'y en
+  a qu'un. À 800 px de haut, le prompt commence sous le pli : on ne voit à la fois ni l'invite, ni la durée, ni le bouton.
+- **Mal hiérarchisé** : l'ordre de la colonne est celui du graphe (modèle, entrées, prompt, réglages), pas celui
+  d'une intention ; les réglages qui changent le résultat (format, résolution, durée) sont au même rang que le
+  détail des références ou le crf.
+- **Le Multishot** (`commun/multishot.js`) est une fenêtre par-dessus la page : on n'y glisse rien depuis le panneau
+  Asset (la fenêtre couvre tout), et il faut « Écrire dans le prompt » pour qu'il compte. **Ses poignées ne
+  marchaient pas** : au premier mouvement, la frise était redessinée (`paintTl`), la poignée tenue sortait de la page
+  avec sa capture du pointeur, le glisser s'arrêtait — essayé : 120 px de glisser déplaçaient la coupe de 0,1 s.
+- **Le glisser d'un élément** : depuis « Ce workspace » du panneau Asset, un élément glissé sur les Entrées arrive
+  bien (`ITEM_MIME`, essayé) ; mais un personnage de la section **Character Factory** du panneau, pas encore importé,
+  ne porte que `CF_MIME` (`commun/dock.js`), que seul le canevas d'Idéation comprenait : `dropZone` (le dépôt de tous
+  les outils) le refusait sans rien dire. C'est le cas des personnages de Cal : « les images marchent mais pas les
+  éléments ».
+
+### 9.2 Ce que fait la barre d'Image, et pourquoi elle marche
+
+`image/` (29/09, capture 2 de Higgsfield) : le fil sur toute la largeur et une barre flottante en bas, trois lignes —
+les références en vignettes (on y dépose, on les réordonne en les glissant), le prompt d'une à trois lignes, des
+puces (modèle, format, taille, nombre, prise de vue, LoRA, avancé) qui ouvrent un petit menu vers le haut ou un
+panneau au-dessus de la barre ; à droite, « Générer », le seul orange, avec le temps mesuré. Elle marche parce que
+**tout ce qui change le résultat est visible d'un coup d'œil** (chaque puce montre sa valeur), que l'aide est dans les
+infobulles, que le résultat paraît juste au-dessus, dans le fil, et que la barre ne bouge pas quand on fait défiler.
+
+### 9.3 La nouvelle hiérarchie
+
+La page Vidéo prend la forme d'Image : le fil sur toute la largeur, la barre de création en bas. Ce qu'on voit d'abord,
+dans cet ordre : **l'invite et ses références** (les vignettes et leur jeton `@element1`, le nom de l'élément),
+**le format** (16:9, 9:16, 1:1, 2,4:1, 21:9… dessinés), **la durée** (aux pas d'H3), **la qualité et la résolution**
+avec le temps estimé, **le bouton**. Le reste est replié derrière une puce : le son et la musique, les aides d'écriture
+(caméra, réplique, exclusions, assistant), les réglages avancés (pas, graine, LoRA, modèle, crf, détail des
+références, graphe), et « ce que H3 reçoit ». Le Multishot s'ouvre **dans la barre**, au-dessus de l'invite : la frise
+des plans, le plan choisi édité sur place, et l'on y dépose les éléments comme ailleurs.
