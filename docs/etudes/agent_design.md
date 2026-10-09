@@ -1,5 +1,7 @@
 # Étude — l'agent design (06/10/2026)
 
+> **09/10** : `agent_autonome.md` reprend D1-D10 (§ 10, A10) et fait charger les compétences par le code ; l'agent design y devient la skill « slides » (lot 4).
+
 Demande de Cal (06/10) : « c'est quoi la passe assistée ? on n'a pas un vrai agent qui travaille cela, donc il
 en faudra un à un moment, avec des skills en design, et qui peut changer des trucs avec des briefs du user en
 langage naturel. »

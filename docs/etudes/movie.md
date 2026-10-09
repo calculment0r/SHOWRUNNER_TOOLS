@@ -4,6 +4,9 @@ Cal, 29/09 : « movie creator devient simplement "vidéo", movie creator c'est t
 clair ». Le nom affiché partout est **Vidéo** ; le chemin `movie/`, les travaux `movie.*`, les
 routes `/api/movie/*` et l'interrupteur `movie_engine` gardent le leur (aucun lien mort).
 
+Veille du 09/10 (`veille_1009.md`) : retirer, détourer, rééclairer un plan (LTX-2.5 et ses IC-LoRA, VOID,
+l'inpainting d'H3), prolonger un plan, et le dialogue joué (« jeu libre → plans dialogués », § 2.8).
+
 Ce que Cal a demandé (28/09 au soir) : un outil « simple et qui fonctionne
 comme Higgsfield » — un prompt, image → vidéo (première image), références
 → vidéo ; des **éléments** réutilisables entre les outils (un personnage de

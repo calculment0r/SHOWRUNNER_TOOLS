@@ -385,6 +385,13 @@ def isolation_checks() -> None:
             if not isinstance(d, dict) or d.get("space") not in known:
                 bad.append((where, d.get("space") if isinstance(d, dict) else type(d).__name__))
         ok(not bad, f"isolement : « {name} » ({what}) : chaque document porte un Workspace connu ({n} lus) — {bad[:4]}")
+    # l'inventaire de qui a créé quoi (core/inventaire.py, ARCHITECTURE.md § 11) : chaque magasin à documents y est
+    # énuméré par son outil (inventaire.declare) ou rattaché à ce dont il dépend (inventaire.attach), et rien d'autre
+    from core import inventaire
+    lost = [n for n, (how, _, _) in STORES.items() if how == "champ" and n not in inventaire.covered()]
+    ok(not lost, f"isolement : chaque magasin « champ » est dans l'inventaire (core/inventaire.py : declare ou attach) — manquent : {lost}")
+    stray = sorted(n for n in inventaire.covered() if not any(fnmatch.fnmatch(n, k) for k in STORES))
+    ok(not stray, f"isolement : l'inventaire ne nomme que des entrées de STORES — inconnues : {stray}")
 
     # 2. le rejeu : une personne d'une autre Team, dans son seul Workspace
     before = config.CFG.get("auth")

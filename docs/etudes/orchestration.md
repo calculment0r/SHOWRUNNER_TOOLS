@@ -1,5 +1,7 @@
 # L'orchestration des calculs — étude du 29/09/2026
 
+> **09/10** : le modèle de langue « à l'entrée » du § 1 (comprendre une demande, choisir dans le catalogue) est repris par `agent_autonome.md` (le routeur et le registre des capacités, sur DGX2).
+
 La demande de Cal (29/09), mot pour mot :
 
 > « je me demande si on va pas être obligé d'avoir un petit modèle d'IA

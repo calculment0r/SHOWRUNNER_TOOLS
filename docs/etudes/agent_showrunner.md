@@ -1,5 +1,7 @@
 # Étude — l'agent Showrunner dans Idéation (05/10/2026)
 
+> **09/10** : la suite (routeur, politique de conversation, skills, registre des capacités, premier lot) est dans `agent_autonome.md`, qui consolide cette étude sans la remplacer.
+
 Demande de Cal (05/10, « le mode Showrunner ») : « on doit faire une énorme analyse de tous
 les documents et pouvoir les organiser déjà dans notre canvas avec l'aide de notre agent, qui
 sera toujours disponible dans ce mode studio, comme le Supercomputer de Higgsfield. Cependant,

@@ -1201,6 +1201,9 @@ def r_changes(req):
 
 
 def register(app) -> None:
+    from core import inventaire
+    inventaire.attach("elements", "le journal des éléments : des gestes (publier, retirer), pas des créations — "
+                                  "l'élément et ses versions sont des objets de la bibliothèque")
     library.TRASH_GUARDS.append(trash_guard)
     # rapatrier un document, avec ce qu'il pose : core/library.py juge et copie, ce module sait les documents
     library.DOC_IMPORT.update(sequence=_import_sequence, playlist=_import_playlist)

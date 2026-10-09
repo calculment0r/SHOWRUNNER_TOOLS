@@ -25,10 +25,13 @@ import { uaShort } from '../commun/porte.js';
 import { createUndo } from '../commun/undo.js';
 import { prefs } from '../commun/prefs.js';
 import { contextMenu, pageMenu } from '../commun/menu.js';
+import { tableauInit, tableauSec, loadTableau, tableauCount } from './tableau.js';
 
 mountHeader('admin', { sub: 'la page de Cal' });
 
 const SECTIONS = [
+  // la vue d'ensemble de Cal ; pour qui n'est pas admin du portail, son tableau de bord (admin/tableau.js)
+  ['tableau', '0', 'Vue d’ensemble', 'teams · workspaces · qui crée'],
   ['demandes', 'A', 'Demandes', 'accès · studio'],
   ['personnes', 'B', 'Personnes', 'apps ou studio · teams · quotas'],
   ['teams', 'C', 'Teams', 'workspaces · membres · guests'],
@@ -52,8 +55,12 @@ contextMenu(main, (e) => e.target.closest('.qr')?._menu?.() || null);
 pageMenu(() => [{ head: 'Admin' },
   { label: 'Relire maintenant', icon: '↻', onclick: () => refresh(true) },
   { label: 'Aller à', icon: '▤', items: shown().map(([id, k, name]) => ({ label: `${k} · ${name}`, checked: S.sec === id, onclick: () => go(id) })) }]);
-// les sections qu'on voit : toutes pour un admin du portail, les Teams seulement sinon
-function shown() { return S.limited ? SECTIONS.filter(([id]) => id === 'teams') : SECTIONS; }
+// les sections qu'on voit : toutes pour un admin du portail ; sinon son tableau de bord, puis les Teams
+const LIMITED = ['tableau', 'teams'];
+function shown() {
+  return S.limited ? SECTIONS.filter(([id]) => LIMITED.includes(id)).map((x) => (x[0] === 'tableau' ? [x[0], x[1], 'Tableau de bord', 'mes teams · qui crée quoi'] : x))
+    : SECTIONS;
+}
 
 const post = (path, body) => api(path, { method: 'POST', body: body || {} });
 async function act(fn, msg) {
@@ -92,6 +99,7 @@ function nav() {
   const counts = st ? { demandes: waiting, personnes: st.users.length,
     file: st.queue.running.length + st.queue.queued.length } : {};
   if (S.teams) counts.teams = S.teams.teams.filter((t) => !t.personal || !S.teams.everyone).length;
+  if (tableauCount() != null) counts.tableau = tableauCount();
   const badge = $('#sr-admin');   // l'en-tête suit sans attendre son propre relevé
   if (badge && st) badge.textContent = waiting ? `Admin · ${waiting}` : 'Admin';
   $('#adm-nav').replaceChildren(...shown().map(([id, k, name, sub]) => el('li', {},
@@ -104,7 +112,7 @@ function nav() {
 }
 
 async function go(id) {
-  if (S.limited) id = 'teams';
+  if (S.limited && !LIMITED.includes(id)) id = 'tableau';
   S.sec = id;
   history.replaceState(null, '', location.search + '#' + id);
   render(true);
@@ -122,6 +130,7 @@ async function loadTeams() {
 async function loadSection() {
   try {
     if (S.sec === 'teams' || S.sec === 'personnes') await loadTeams();
+    if (S.sec === 'tableau') await loadTableau();
     if (S.sec === 'demandes' && S.porte === undefined) await loadPorte();
     if (S.sec === 'demandes' && !S.limited) await loadAlertes();
     if (S.sec === 'machines') S.mach = await api('admin/machines');
@@ -147,12 +156,12 @@ async function refresh(now = false) {
     if (!S.limited) {
       try { S.state = await api('admin/state'); } catch (e) {
         if (e.status !== 403 || /réseau de Cal/.test(e.message)) throw e;
-        // pas admin du portail : la page d'administration de ses Teams
+        // pas admin du portail : son tableau de bord, et la page d'administration de ses Teams
         S.limited = true; S.state = null;
-        if (S.sec !== 'teams') { S.sec = 'teams'; history.replaceState(null, '', location.search + '#teams'); }
+        if (!LIMITED.includes(S.sec)) { S.sec = 'tableau'; history.replaceState(null, '', location.search + '#tableau'); }
       }
     }
-    if (['machines', 'journal', 'teams', 'personnes', 'demandes'].includes(S.sec)) await loadSection();
+    if (['machines', 'journal', 'teams', 'personnes', 'demandes', 'tableau'].includes(S.sec)) await loadSection();
     render(now);
   } catch (e) {
     if (e.status === 403) return denied(e.message);
@@ -174,12 +183,16 @@ function denied(why = '') {
 }
 
 function render(force = false) {
-  if (!S.state && !(S.limited && S.teams)) return;
+  if (!S.state && !(S.limited && (S.teams || S.sec === 'tableau'))) return;
   nav();
   if (!force && busy()) return;   // on ne repeint pas sous les doigts de Cal
-  const fn = { demandes, personnes, teams: teamsSec, file, machines: machinesSec, cablage, stockage, journal: journalSec, diag: diagSec }[S.sec];
-  main.replaceChildren(...[].concat(fn()).filter(Boolean));
+  const fn = { tableau: tableauSec, demandes, personnes, teams: teamsSec, file, machines: machinesSec, cablage, stockage, journal: journalSec, diag: diagSec }[S.sec];
+  const nodes = [].concat(fn()).filter(Boolean);
+  // une section qui rend le même nœud (le tableau : il se repeint lui-même) reste en place : son champ garde la main
+  if (nodes.length === 1 && main.childNodes.length === 1 && main.firstChild === nodes[0]) return;
+  main.replaceChildren(...nodes);
 }
+tableauInit({ head, render, go: (id) => go(id), isCal: () => !S.limited && !!S.state });
 
 // ── A · les demandes ────────────────────────────────────────
 // Ajouter quelqu'un d'avance (Cal, 29/09 : « un login simple genre su007 », puis « je veux les rentrer côté
