@@ -746,6 +746,15 @@ s'écoute.
 - `check.py music music_jouets music_banques` : 102 contrôles ;
   `music_banques` en ajoute 14 (le SFZ, la liste, le manifeste, un son, les
   chemins refusés, un manifeste abîmé écarté).
+- `music_moteurs` (11 contrôles, sous node, sans navigateur) : les deux
+  modules se servent, s'instancient sans importation, jouent la3 à sa hauteur
+  sans NaN ni écrêtage ; **la garde des dénormaux** — le coût des secondes où
+  la résonance s'éteint, contre une seconde sans note : 2 à 3 fois avec le
+  plancher de bruit, 100 fois sans lui (essayé sur une compilation sans
+  plancher : la garde échoue, comme il faut) ; les lois des banques (le suivi
+  de vélocité, les fondus, le tour, une note hors des zones, le rapport).
+- `check.py` complet : voir le compte rendu de la branche (3 885 contrôles à
+  0 échec avant `music_moteurs`).
 
 ### 7.5 Ce qui reste
 
