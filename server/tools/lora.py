@@ -665,7 +665,7 @@ def _inventaire():
     from core import inventaire
     from tools import ideation
     for r in inventaire.json_docs(_dir().glob("*.json"), _inventaire_fiche):
-        # le Workspace est celui de la planche : lu à chaque fois (core/library.py le garde avec elle)
+        # le Workspace est celui de la planche : lu à chaque fois (ideation.board_space le retient pour elle)
         yield {**r, "space": ideation.board_space(r["board"])}
 
 
