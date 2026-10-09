@@ -505,10 +505,8 @@ le goût est à Cal.
 - La **table de mix** (ses tranches se règlent par `pousserTranche`, elle
   n'est pas au catalogue, § 1 n° 44) : rien n'y est capté. (Le FM-6 et le
   STRINGS-4, qui n'avaient rien de branché, en ont depuis le lot « odio-moteurs ».)
-- **Le Résonateur et Physique** (lot « odio-moteurs ») reçoivent l'instant
-  (`setParameter(id, valeur, temps)`) mais leur AudioWorklet, qui rend d'avance
-  dans une file, ne le date pas encore : le modèle est dans `plaits/macro.js`
-  (`dates`).
+- **Le Résonateur et Physique** (lot « odio-moteurs ») datent eux aussi leurs
+  réglages dans leur AudioWorklet (`dates`, le modèle de `plaits/macro.js`).
 - **La précision** : ce qu'un module natif ne tient pas par un AudioParam
   (la durée de la réverbération, qui recalcule sa réponse ; le drive de la
   distorsion ; un type de filtre) prend la copie quand la tranche se
