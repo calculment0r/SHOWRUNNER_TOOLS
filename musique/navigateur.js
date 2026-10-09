@@ -142,6 +142,8 @@ export function createBrowser(app, { poser = null } = {}) {
       onclick: (e) => { e.stopPropagation(); if (enEcoute() === pr.id) taire(); else ecouter(app, pr, { geste: true, item }); } }, enEcoute() === pr.id ? '■' : '▶');
     return b;
   }
+  // les banques d'échantillons du portail sont lues après l'ouverture (musique.js) : leurs préréglages arrivent
+  document.addEventListener('mu:banques', () => { if (root.isConnected && isOpen('pre')) render(); });
   document.addEventListener('mu:ecoute', (e) => {
     if (!root.isConnected) return;
     for (const b of root.querySelectorAll('[data-ecoute]')) { const on = b.dataset.ecoute === e.detail?.id; b.classList.toggle('on', on); b.textContent = on ? '■' : '▶'; }

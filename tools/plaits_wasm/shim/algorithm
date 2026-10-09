@@ -1,5 +1,6 @@
 // SHOWRUNNER — <algorithm> minimal pour compiler Plaits en WebAssembly sans
-// bibliothèque standard (-ffreestanding) : ce que ses sources appellent.
+// bibliothèque standard (-ffreestanding) : ce que ses sources appellent (et celles
+// de Rings et d'Elements, tools/mutable_wasm/).
 #ifndef SR_SHIM_ALGORITHM
 #define SR_SHIM_ALGORITHM
 #include <stddef.h>
@@ -9,6 +10,14 @@ template <class T> inline const T& max(const T& a, const T& b) { return a < b ? 
 template <class I, class T> inline void fill(I first, I last, const T& v) { for (; first != last; ++first) *first = v; }
 template <class I, class O> inline O copy(I first, I last, O out) { for (; first != last; ++first, ++out) *out = *first; return out; }
 template <class T> inline void swap(T& a, T& b) { T t = a; a = b; b = t; }
+template <class I> inline void reverse(I first, I last) { while (first != last && first != --last) { swap(*first, *last); ++first; } }
+// Rings (note_filter.h) fait tourner la fenêtre de sa médiane : trois retournements
+template <class I> inline I rotate(I first, I middle, I last) {
+  if (first == middle) return last;
+  if (middle == last) return first;
+  reverse(first, middle); reverse(middle, last); reverse(first, last);
+  return first + (last - middle);
+}
 // tri par insertion : Plaits ne trie que les quelques notes d'un accord
 template <class I> inline void sort(I first, I last) {
   for (I i = first; i != last; ++i)

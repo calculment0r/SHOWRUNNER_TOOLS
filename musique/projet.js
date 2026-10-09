@@ -75,6 +75,9 @@
 
 import { guessTag, MODULES, TRACK_KINDS, COLORS } from './modules.js';
 import { SECTION_TAGS } from './modules.js';   // la structure : les étiquettes des paroles (06/10)
+import { ARP_PARAMS } from './modules.js';
+// les machines du nodal sur leurs vrais moteurs (09/10) : la voix d'une machine et son branchement
+import { moteurDe, TYPE_DE_VOIX, VOIX_DES_PANNEAUX, pousserTout } from './machines/tuiles.js';
 
 export const VERSION = 2;
 // le groupe des arcs d'un projet neuf, ou d'un projet d'avant (arcs.js en a les définitions)
@@ -111,7 +114,31 @@ export function migrate(p) {
   // la refonte du soir (docs/etudes/odio_session.md § 6) : les voies, la
   // Session d'avant convertie, la bibliothèque du projet
   migrerSession(p);
+  migrerMachines(p);
   p.v = VERSION;
+  return p;
+}
+
+// Les machines du nodal sur leurs vrais moteurs (09/10, docs/etudes/odio_synthes.md
+// § 7) : une machine posée avant porte encore l'ancien module (le FM-6 sur l'Analog,
+// la MicroFreak sur le Numérique…). Son module prend la sorte que sa voix demande
+// (machines/tuiles.js, TYPE_DE_VOIX), ses réglages repartent de la voix propre du
+// panneau, puis chaque commande branchée redescend (pousserTout) : la machine sonne
+// comme ses molettes le disent. L'arpège est gardé ; une voie d'automation d'un
+// réglage que la nouvelle sorte n'a pas s'en va (elle ne tenait plus rien).
+export function migrerMachines(p) {
+  const arp = new Set(ARP_PARAMS.map((x) => x.k));
+  for (const m of p.modules || []) {
+    const voix = m.mach && moteurDe(m.mach.id)?.voice;
+    const type = voix && TYPE_DE_VOIX[voix];
+    if (!type || m.type === type || !MODULES[type] || MODULES[m.type]?.role !== MODULES[type].role) continue;
+    const garde = Object.fromEntries(Object.entries(m.params || {}).filter(([k]) => arp.has(k)));
+    m.type = type;
+    m.params = { ...(VOIX_DES_PANNEAUX[m.mach.id] || {}), ...garde };
+    pousserTout(m);
+    const ks = new Set(MODULES[type].params.map((x) => x.k));
+    p.auto = (p.auto || []).filter((L) => L.mod !== m.id || ks.has(L.k));
+  }
   return p;
 }
 
