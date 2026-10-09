@@ -21,6 +21,8 @@
 import { mountHeader, api, jobs, pick, uploadFile, toast, $, href, fmtDur, stateFr, session, espace, enTeteEspace, espaceDocument, surEspace } from '../commun/shell.js';
 import { prefs } from '../commun/prefs.js';   // le tampon audio (music.tampon, musique/prefs.json)
 import { Engine, renderMix, rendusLibres, renderClips, wav24, peakDb, songEnd, peaks } from './moteur.js';
+import { listeBanques } from './banques.js';   // les banques d'échantillons du portail (09/10)
+import { presetsDeBanques } from './prereglages.js';
 import { openPublish } from './element.js';   // éléments : « Publier comme élément » (30/09)
 import { MODULES, TRACK_KINDS, COLORS, COLOR_FR, PRESETS, SOURCES_OF, DRUM_MODELS, NOTE_MODELS, TONICS, TONICS_FR, MODES,
   kindOfSource, keyLabel, moduleName } from './modules.js';
@@ -63,7 +65,15 @@ async function loadItem(id) {
   if (!items.has(id)) items.set(id, api(`library/${id}`).then((it) => ({ ...it, href: href(it.url) })));
   return items.get(id);
 }
-const engine = new Engine({ loadItem });
+// les banques d'échantillons (09/10) : servies par le portail (server/tools/music_banques.py) ;
+// chacune installée devient un préréglage du navigateur (prereglages.js, presetsDeBanques)
+listeBanques(api).then((bs) => {
+  const deja = new Set(PRESETS.map((x) => x.id));
+  PRESETS.push(...presetsDeBanques(bs).filter((x) => !deja.has(x.id)));
+  document.dispatchEvent(new CustomEvent('mu:banques', { detail: bs.length }));
+}).catch(() => { /* sans les banques, le reste du studio marche */ });
+const engine = new Engine({ loadItem, loadBanque: (id) => api(`music/banques/${id}`),
+  sonBanque: async (id, f) => (await api(`music/banques/${id}/f/${f}`, { blob: true })).arrayBuffer() });
 engine.onstop = () => {
   if (rec.active) rec.end();
   paintTransport();

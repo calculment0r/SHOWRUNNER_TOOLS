@@ -68,11 +68,11 @@ MAX_BYTES = 4 << 20
 ODIO_SOURCES = {"rythme", "analog", "acid", "plaits", "macro",   # macro : Plaits complet (musique/plaits/, 06/10)
                 "resonateur", "physique"}                  # Rings et Elements (musique/mutable/, 09/10)
 ODIO_EFFECTS = {"reverbe", "chorus", "rtt", "comp3", "eq3", "filtre", "satura", "crush", "table", "volume"}
-SOURCES = {"drums", "synth", "sampler", "player"} | ODIO_SOURCES
+SOURCES = {"drums", "synth", "sampler", "banque", "player"} | ODIO_SOURCES   # banque : les échantillons (music_banques.py, 09/10)
 EFFECTS = {"delay", "reverb", "comp", "eq", "filter", "dist"} | ODIO_EFFECTS
 MODULE_TYPES = SOURCES | EFFECTS | {"strip", "master", "bus"} | music_jouets.TYPES   # jouets : leurs sortes
 TRACK_SOURCES = {"drums": {"drums", "rythme"}, "synth": {"synth", "analog", "acid", "plaits", "macro", "resonateur", "physique"},
-                 "sampler": {"sampler"}, "audio": {"player"}, "bus": {"bus"}}
+                 "sampler": {"sampler", "banque"}, "audio": {"player"}, "bus": {"bus"}}
 COLORS = {"or", "cy", "amb", "grn2", "coral-1", "coral-2", "coral-3"}
 # les voix de la DR-9 et celles de la boîte à rythme d'ODIO (onze, TR-8S)
 DRUM_VOICES = ("bd", "sd", "cp", "ch", "oh", "lt", "ht", "cb", "mt", "rs", "cc", "rc")

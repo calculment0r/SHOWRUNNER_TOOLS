@@ -96,4 +96,4 @@ export const JOUETS = {
 };
 export const JOUET_TYPES = Object.keys(JOUETS);
 // les instruments qui reçoivent des notes (le lecteur de clips audio n'en joue pas)
-export const NOTE_SOURCES = ['drums', 'synth', 'sampler', 'rythme', 'analog', 'acid', 'plaits', 'macro', 'resonateur', 'physique'];
+export const NOTE_SOURCES = ['drums', 'synth', 'sampler', 'rythme', 'analog', 'acid', 'plaits', 'macro', 'resonateur', 'physique', 'banque'];

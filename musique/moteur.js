@@ -27,7 +27,8 @@ import { motifJoue, reglagesArpege, listeDuPas, notesDuPas } from './arpege.js';
 import { jouetNode, jouetsAutomate } from './jouets/son.js';   // jouets : le son des jouets du Playground
 import { influer, rendre } from './machines/influence.js';   // attracteurs : ce que les attracteurs du banc font au son (nodal)
 import { trajets, sansSession } from './projet.js';   // les chaînes des pistes et des voies, lues dans les câbles (une seule vérité) ; l'export sans la Session
-import { etageArcs, configurerArcs, planifierArcs, poserArcs } from './arcs.js';   // les arcs du projet (06/10) : l'étage de la sortie, l'envoi des retours
+import { etageArcs, configurerArcs, planifierArcs, poserArcs } from './arcs.js';
+import { zonesDe, rapport, cleSon } from './banques.js';   // les banques d'échantillons (09/10) : les zones d'une note, leur niveau   // les arcs du projet (06/10) : l'étage de la sortie, l'envoi des retours
 
 const LOOKAHEAD_MS = 25;      // MDN : « lookahead = 25.0 »
 const DEPART_S = 0.05;        // la lecture part 50 ms après l'instant présent (playFrom) ; l'export s'y cale (renderMix)
@@ -616,6 +617,60 @@ const SRC = {
       cut(t) { held.cut(t); },
     };
   },
+  // LES ÉCHANTILLONS (09/10, banques.js) : une note fait sonner les zones de la
+  // banque qui la couvrent (notes, vélocité, tour), chacune lue à sa hauteur
+  // (playbackRate : la note moins sa clé, ses cents), depuis son départ, en
+  // boucle si elle en a une ; son enveloppe est celle de la zone (attaque
+  // droite, tenue, déclin vers le maintien, chute), attaque et chute
+  // multipliées par les réglages. Une zone « un coup » (loop_mode=one_shot) ne
+  // se relâche pas. Une banque pas encore chargée : la note est perdue, et la
+  // banque est demandée (env.demander) — engine.need la charge avant la lecture
+  // et l'export, qui ne perdent donc rien.
+  banque(ctx, m, env) {
+    const out = G(ctx), held = tenues(ctx), tours = new Map();
+    const voice = (p, t, vel) => {
+      const bid = m.params?.banque;
+      const B = bid && env.banques?.get(bid);
+      if (!B) { if (bid) env.demander?.(bid); return null; }
+      const note = p + val(m, 'transpo');
+      const att = val(m, 'att'), rel = val(m, 'rel'), cents = val(m, 'accord');
+      const sons = [];
+      for (const { z, gain } of zonesDe(B, note, vel, tours, val(m, 'dyn'))) {
+        const buf = env.buffers.get(cleSon(bid, z.f));
+        if (!buf) { env.demander?.(bid); continue; }
+        const src = new AudioBufferSourceNode(ctx, { buffer: buf, playbackRate: rapport(z, note, cents) });
+        if (z.boucle) { src.loop = true; src.loopStart = z.boucle[0]; src.loopEnd = Math.min(buf.duration, z.boucle[1]); }
+        const [a, h, d, s] = z.env, amp = G(ctx, 0), ta = Math.max(0.0005, a * att);
+        amp.gain.setValueAtTime(0, t);
+        amp.gain.linearRampToValueAtTime(gain, t + ta);
+        if (d > 0 && s < 1) amp.gain.setTargetAtTime(gain * s, t + ta + h, d / 4);
+        src.connect(amp).connect(out);
+        src.start(t, Math.min(z.dec, buf.duration));
+        if (!z.boucle) src.stop(t + (buf.duration - z.dec) / src.playbackRate.value + 0.01);
+        env.live(src);
+        sons.push({ src, amp, z });
+      }
+      if (!sons.length) return null;
+      return {
+        off(tr) {
+          for (const { src, amp, z } of sons) {
+            if (z.seul) continue;   // un coup : le son va au bout
+            const r = Math.max(0.005, z.env[4] * rel), q = Math.max(tr, t + 0.001);
+            release(amp.gain, q, r);
+            try { src.stop(q + r * 1.6 + 0.05); } catch { /* déjà arrêté */ }
+          }
+        },
+      };
+    };
+    return {
+      output: out,
+      ap: { vol: [[out.gain, dbToGain]] },
+      update(mm) { m = mm; setP(ctx, out.gain, mm.on === false ? 0 : dbToGain(val(mm, 'vol'))); },
+      noteOn(p, t, vel = 0.8, dur) { const v = voice(p, t, vel); if (v && dur !== undefined) { v.off(t + dur); held.add(v, t, t + dur); } return v; },
+      noteOff(v, t) { if (v) v.off(t); },
+      cut(t) { held.cut(t); },
+    };
+  },
   player(ctx, m, env) {
     const out = G(ctx);
     const sons = new Set();   // les lectures en cours (la Session les coupe : cut)
@@ -1186,9 +1241,14 @@ export class Graph {
 const TIMER = `let id=null;onmessage=(e)=>{if(e.data==='go'){if(!id)id=setInterval(()=>postMessage(0),${LOOKAHEAD_MS});}else{clearInterval(id);id=null;}}`;
 
 export class Engine {
-  constructor({ loadItem } = {}) {
+  constructor({ loadItem, loadBanque = null, sonBanque = null } = {}) {   // sonBanque(id, fichier) → Promise<ArrayBuffer>
     this.ctx = null; this.graph = null; this.proj = null;
     this.buffers = new Map(); this.loading = new Map(); this.loadItem = loadItem;
+    // les banques d'échantillons (09/10) : leur manifeste par identifiant ; leurs
+    // sons décodés vont dans `buffers` (banques.js, cleSon). `loadBanque(id)` rend
+    // le manifeste, `sonBanque(id, fichier)` les octets d'un son (musique.js : l'API du portail)
+    this.banques = new Map(); this.chargeBanque = new Map(); this.loadBanque = loadBanque; this.sonBanque = sonBanque;
+    this.demander = (id) => { this.banque(id).catch(() => null); };
     this.voices = new Set(); this.play = null; this.pos = 0; this.onstop = null; this.onplay = null;
     this.metro = false;
     this.live = (node) => { this.voices.add(node); node.onended = () => this.voices.delete(node); };
@@ -1220,7 +1280,7 @@ export class Engine {
 
   creer() {
     this.ctx = new AudioContext({ latencyHint: TAMPONS[this.tampon].latence });
-    this.graph = new Graph(this.ctx, { buffers: this.buffers, live: this.live, ecoute: () => this.ecoute });   // attracteurs : la tête d'écoute du banc, quand elle gouverne
+    this.graph = new Graph(this.ctx, { buffers: this.buffers, banques: this.banques, demander: this.demander, live: this.live, ecoute: () => this.ecoute });   // attracteurs : la tête d'écoute du banc, quand elle gouverne
     if (this.proj) { this.graph.sync(this.proj); this.graph.settle(this.proj, this.pos); }
   }
 
@@ -1278,7 +1338,34 @@ export class Engine {
     for (const m of p.modules) if (m.type === 'sampler' && m.params?.item) ids.add(m.params.item);
     for (const c of p.clips) if (c.item) ids.add(c.item);
     for (const c of p.slots || []) if (c.item) ids.add(c.item);   // les clips de Session
-    return Promise.all([...ids].map((id) => this.buffer(id).catch(() => null)));
+    const banques = new Set(p.modules.filter((m) => m.type === 'banque' && m.params?.banque).map((m) => m.params.banque));
+    return Promise.all([...[...ids].map((id) => this.buffer(id).catch(() => null)), ...[...banques].map((id) => this.banque(id).catch(() => null))]);
+  }
+
+  // Une banque d'échantillons : son manifeste, puis chacun de ses sons, décodé
+  // (une fois par page ; six à la fois). Rend le manifeste quand tout est là.
+  banque(id) {
+    if (!this.chargeBanque.has(id)) {
+      this.chargeBanque.set(id, (async () => {
+        if (!this.loadBanque || !this.sonBanque) throw new Error('banques : pas de chemin vers le portail');
+        const B = await this.loadBanque(id);
+        const fichiers = [...new Set(B.zones.map((z) => z.f))];
+        const dec = new OfflineAudioContext(2, 1, 48000);
+        let i = 0;
+        const ouvrier = async () => {
+          while (i < fichiers.length) {
+            const f = fichiers[i++], cle = cleSon(id, f);
+            if (this.buffers.has(cle)) continue;
+            this.buffers.set(cle, await dec.decodeAudioData(await this.sonBanque(id, f)));
+          }
+        };
+        await Promise.all(Array.from({ length: 6 }, ouvrier));
+        this.banques.set(id, B);
+        document.dispatchEvent(new CustomEvent('mu:banque', { detail: id }));
+        return B;
+      })().catch((e) => { this.chargeBanque.delete(id); throw e; }));
+    }
+    return this.chargeBanque.get(id);
   }
 
   buffer(id) {
@@ -1623,14 +1710,14 @@ export class Engine {
 // (en doubles croches) joué au tempo `bpm`, transposé de `tr` demi-tons ;
 // l'arpège du réglage s'y applique comme à la lecture. `buffers` : les sons
 // décodés (l'échantillonneur lit `params.item`). Rend un AudioBuffer.
-export async function apercu(type, params, phrase, { bpm = 120, tr = 0, buffers = null, sampleRate = 48000, queue = 1.5 } = {}) {
+export async function apercu(type, params, phrase, { bpm = 120, tr = 0, buffers = null, banques = null, sampleRate = 48000, queue = 1.5 } = {}) {
   const def = MODULES[type];
   if (!def || def.role !== 'source' || def.jouet) throw new Error(`pas un instrument : ${type}`);
   const m = { id: 'apercu', type, on: true, params: { ...(params || {}) } };
   const motif = joue(phrase, m);
   const pas = 60 / bpm / 4, d0 = 0.01;
   const octx = new OfflineAudioContext({ numberOfChannels: 2, length: Math.ceil((d0 + motif.steps * pas + queue) * sampleRate), sampleRate });
-  const env = { buffers: buffers || new Map(), live: () => {}, pending: [], held: new Set() };
+  const env = { buffers: buffers || new Map(), banques: banques || new Map(), live: () => {}, pending: [], held: new Set() };
   const n = makeNode(octx, m, env);
   n.update(m, bpm);
   n.output.connect(octx.destination);
@@ -1706,7 +1793,7 @@ async function rendreMix(engine, p, from, to, { tail = 2, sampleRate = 48000, so
   const spb = 60 / p.bpm, D = decale / sampleRate;
   const length = Math.ceil(((to - from) * spb + tail) * sampleRate) + decale;
   const octx = new OfflineAudioContext({ numberOfChannels: 2, length, sampleRate });
-  const g = new Graph(octx, { buffers: engine.buffers, live: () => {} });
+  const g = new Graph(octx, { buffers: engine.buffers, banques: engine.banques, live: () => {} });
   const lacher = () => { for (const n of g.nodes.values()) n.dispose?.(); };
   g.sync(p);
   await g.ready();                    // le worklet de Plaits, le bruit de la boîte à rythme

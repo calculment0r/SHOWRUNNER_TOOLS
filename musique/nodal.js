@@ -110,7 +110,7 @@ const TEINTES = ['amb', 'coral-1', 'coral-2', 'coral-3', 'cy', 'grn', 'grn2', 'v
 // nos effets d'ODIO portent le bloc d'ODIO_01 du même nom (blocks/registry.js)
 const REGISTRE = { filtre: 'filtre', satura: 'drive', comp3: 'comp', rtt: 'delay', reverbe: 'reverb', eq3: 'eq', crush: 'crush', chorus: 'chorus', rythme: 'rythme', drums: 'rythme' };
 // ce qui se joue en notes (liens.js, music_jouets.py NOTES_IN)
-const SONS = new Set(['drums', 'synth', 'sampler', 'rythme', 'analog', 'acid', 'plaits', 'macro', 'resonateur', 'physique']);
+const SONS = new Set(['drums', 'synth', 'sampler', 'rythme', 'analog', 'acid', 'plaits', 'macro', 'resonateur', 'physique', 'banque']);
 const rails = (ids, w) => ids.map((id) => ({ id: `p:${id}`, min: { w, h: 19 }, grow: true, max: 26 }));
 // la console : un vumètre, puis les réglages (le « vu » d'ODIO_01 est une section de machine)
 const CONSOLE = (ids) => ({

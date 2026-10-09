@@ -293,6 +293,14 @@ export const BANQUE = [
   E('ech-decale', 'Sans attaque', 'part à 5 % du son', { start: 0.05, a: 0.01, r: 0.3 }),
 ];
 
+// ── les banques d'échantillons (09/10) : un préréglage par banque INSTALLÉE ──
+// sur le portail (server/tools/music_banques.py) ; ils s'ajoutent à la banque de
+// préréglages quand la page a lu la liste (musique.js), rangés dans la catégorie
+// que l'import leur donne (tools/echantillons.py).
+export const presetsDeBanques = (banques) => banques.map((b) => ({
+  id: `bq-${b.id}`, type: 'banque', cat: b.cat, name: b.nom, sub: b.sub || b.source, params: { banque: b.id },
+}));
+
 // ── les phrases d'écoute ────────────────────────────────────
 // En doubles croches, une mesure de quatre temps, sur do (60 = do4) : la
 // session les transpose à sa tonique (tonique ≤ fa# : vers le haut, sinon

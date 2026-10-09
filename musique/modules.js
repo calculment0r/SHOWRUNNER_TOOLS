@@ -143,6 +143,27 @@ export const MODULES = {
     ],
     face: ['root', 'start', 'vol'],
   },
+  // les banques d'échantillons (09/10, décision 4 de docs/etudes/odio_synthes.md) :
+  // des zones de notes et de vélocités, des tours, des boucles, l'enveloppe de
+  // chaque zone (la cartographie SFZ de l'auteur, banques.js) ; la banque est
+  // `params.banque` (son identifiant, comme `item` pour l'échantillonneur). Les
+  // réglages ne font que déplacer ce que la banque dit : la transposition,
+  // l'accord fin, l'attaque et la chute multipliées, le suivi de vélocité.
+  banque: {
+    name: 'Échantillons', kind: 'zones · vélocités · boucles', role: 'source', color: 'amb',
+    params: [
+      P('transpo', 'Transposition', -24, 24, 0, 'dt', 'lin', 1),
+      P('accord', 'Accord fin', -100, 100, 0, 'ct'),
+      P('att', 'Attaque', 0.25, 8, 1, '×', 'log'),
+      P('rel', 'Chute', 0.25, 8, 1, '×', 'log'),
+      P('dyn', 'Dynamique', 0, 1, 1, ''),
+      // −12 dB : les cartographies de VCSL relèvent chaque zone jusqu'à son plein niveau
+      // (« volume » de +7 à +37 dB) ; une note forte crête vers −4 dBFS, un accord dépasserait
+      P('vol', 'Volume', -40, 6, -12, 'dB'),
+      ...ARP_PARAMS,
+    ],
+    face: ['transpo', 'rel', 'dyn', 'vol'],
+  },
   player: {
     name: 'Lecteur', kind: 'clips audio', role: 'source', color: 'grn2',
     // -6 dB : un son généré arrive mastérisé près de 0 dBFS (ACE-Step : -0,4 dB
@@ -296,7 +317,7 @@ Object.assign(MODULES, JOUETS);   // jouets : leurs réglages et leurs ports (mu
 
 export const EFFECT_TYPES = ['delay', 'reverb', 'comp', 'eq', 'filter', 'dist', ...ODIO_TYPES.filter((t) => ODIO[t].role === 'effect')];
 // les sources qu'une piste peut porter, par sorte de piste
-export const SOURCES_OF = { drums: ['drums', 'rythme'], synth: ['synth', 'analog', 'acid', 'plaits', 'macro', 'resonateur', 'physique'], sampler: ['sampler'], audio: ['player'], bus: ['bus'] };
+export const SOURCES_OF = { drums: ['drums', 'rythme'], synth: ['synth', 'analog', 'acid', 'plaits', 'macro', 'resonateur', 'physique'], sampler: ['sampler', 'banque'], audio: ['player'], bus: ['bus'] };
 export const kindOfSource = (type) => Object.keys(SOURCES_OF).find((k) => SOURCES_OF[k].includes(type));
 
 // Les voix d'une batterie, selon sa source : la DR-9 (huit voix) ou la
@@ -323,7 +344,7 @@ export const COLOR_FR = { or: 'orange', cy: 'acier', amb: 'ambre', grn2: 'vert',
 // part (moteur.js, Graph.schedule).
 export const AUTOMATABLE = {
   strip: ['vol', 'pan'], bus: ['in'], master: ['vol'], synth: ['vol', 'cut'], sampler: ['vol'], player: ['vol'],
-  drums: ['lvl'], filter: ['freq', 'q'], delay: ['mix', 'fb'], reverb: ['mix'], dist: ['mix'],
+  drums: ['lvl'], banque: ['vol'], filter: ['freq', 'q'], delay: ['mix', 'fb'], reverb: ['mix'], dist: ['mix'],
   eq: ['lg', 'mg', 'hg', 'mf', 'hpf', 'lpf'], comp: ['thr', 'gain'],
 };
 // les modules d'ODIO : tout réglage continu, posé par setParameter(id, valeur,

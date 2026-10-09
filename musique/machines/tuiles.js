@@ -31,7 +31,7 @@ export const CELL = 46;
 export const CELLS = {
   rythme: { w: 6, h: 6 }, drums: { w: 6, h: 6 }, acid: { w: 4, h: 4 },
   analog: { w: 3, h: 4 }, synth: { w: 3, h: 4 }, plaits: { w: 3, h: 4 }, sampler: { w: 3, h: 4 }, player: { w: 3, h: 3 },
-  macro: { w: 3, h: 4 }, resonateur: { w: 3, h: 4 }, physique: { w: 3, h: 4 },   // les voix de Mutable (06/10, 09/10) : celles d'un instrument
+  macro: { w: 3, h: 4 }, resonateur: { w: 3, h: 4 }, physique: { w: 3, h: 4 }, banque: { w: 3, h: 4 },   // les voix de Mutable (06/10, 09/10) : celles d'un instrument
   filtre: { w: 4, h: 4 }, eq3: { w: 4, h: 4 }, satura: { w: 4, h: 4 }, crush: { w: 4, h: 4 }, comp3: { w: 4, h: 4 },
   chorus: { w: 4, h: 4 }, rtt: { w: 4, h: 4 }, reverbe: { w: 4, h: 4 },
   delay: { w: 4, h: 4 }, reverb: { w: 4, h: 4 }, comp: { w: 4, h: 4 }, eq: { w: 4, h: 4 }, filter: { w: 4, h: 4 }, dist: { w: 4, h: 4 },

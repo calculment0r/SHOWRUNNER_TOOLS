@@ -19,7 +19,7 @@ import { refuse } from './interaction/patch.js';
 import { machineDef, moteurDe } from './tuiles.js';
 import { MODULES, drumVoicesOf } from '../modules.js';
 
-const SONS = ['drums', 'synth', 'sampler', 'rythme', 'analog', 'acid', 'plaits', 'macro', 'resonateur', 'physique'];
+const SONS = ['drums', 'synth', 'sampler', 'rythme', 'analog', 'acid', 'plaits', 'macro', 'resonateur', 'physique', 'banque'];
 
 /**
  * Les prises d'un porteur (module ou bloc du nodal), dans le vocabulaire de
