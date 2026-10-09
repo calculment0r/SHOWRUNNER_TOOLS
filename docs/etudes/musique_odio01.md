@@ -328,7 +328,8 @@ rejoué dessus donne les mêmes chiffres (390, 326, 326, 0 pas rendu ; 28
 contrôles, 0 échec) et la garde nomme désormais ces moteurs et ces machines
 (le Résonateur, Physique, les Échantillons ; le POLY-6, le FM-6, le
 STRINGS-4) : un retrait de leurs sortes, ou un branchement qui ne vise plus un
-réglage de Macro, la fait échouer.
+réglage de Macro, la fait échouer. `python3 tools/check.py` complet, sur la
+branche fusionnée : 4 071 passés, 0 en échec.
 
 Par sorte de module, entendus avant → après (sur n continus) : DR-9 0 → 17
 (26), Synthé 6 → 25 (26), Échantillonneur 1 → 4 (5), Lecteur 0 → 0 (1,
