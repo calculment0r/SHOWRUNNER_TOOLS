@@ -26,8 +26,8 @@ Workspaces, docs/etudes/equipes_espaces.md, étape 2, le 30/09) :
   - un dépôt : le contenu doit être ce que dit son nom ; la taille d'un ami
     est bornée (config `upload_max_mb`) ; un corps JSON, à 32 Mo.
 
-Les personnes : Cal ; A (Albane) et B (Bastien), amis que Cal accepte, donc
-éditeurs de Général (la Team de l'instance, auth._join_instance_team) ; B'
+Les personnes : Cal ; A (Albane) et B (Bastien), amis que Cal accepte (ils n'ont que
+leur My Team : décision de Cal du 09/10), puis met dans Nirvalab, éditeurs de Général ; B'
 (Gil) guest viewer et B'' (Gaël) guest acteur de Général ; C (Cyril),
 membre d'une autre Team.
 """
@@ -89,11 +89,13 @@ def selftest(call, ok) -> None:
             toks[uid] = t
             ok(s1 == 200 and s2 == 200 and t, f"droits : {name} entre, Cal l'accepte ({s1} {s2} {d1})")
         A, B = toks["albane"], toks["bastien"]
-        for uid in ("albane", "bastien"):
+        for name, uid in (("Albane", "albane"), ("Bastien", "bastien")):
             m = (auth.user(uid) or {})
-            ok(m.get("access") == "studio" and _space_role(uid, GENERAL) == "editor",
-               f"droits : {uid}, ami accepté avec le Studio, est éditeur de Général (la Team de l'instance) "
-               f"({m.get('access')} {_space_role(uid, GENERAL)})")
+            alone = _space_role(uid, GENERAL)
+            s, _, _ = H("POST", "/api/equipes/tea-nirvalab/membres", {"pseudo": name, "role": "member"}, cookie=cal, headers=same)
+            ok(m.get("access") == "studio" and alone is None and s == 200 and _space_role(uid, GENERAL) == "editor",
+               f"droits : {uid}, ami accepté avec le Studio, n'a que sa My Team (Cal, 09/10) ; Cal le met dans Nirvalab : "
+               f"éditeur de Général ({m.get('access')} {alone} {s} {_space_role(uid, GENERAL)})")
         # B' guest viewer, B'' guest acteur de Général ; C membre d'une autre Team
         s1, _, _ = H("POST", "/api/equipes/tea-nirvalab/membres", {"pseudo": "Gil Viewer", "role": "guest", "guest": "viewer",
                                                                    "spaces": [GENERAL]}, cookie=cal, headers=same)

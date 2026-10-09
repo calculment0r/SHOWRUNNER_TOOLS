@@ -1421,6 +1421,7 @@ def selftest(call, ok) -> None:
             # (la même entrée que droits.py : une demande, que Cal accepte ; déjà acceptée, on entre)
             s1, d1, t = H("POST", "/api/auth/enter", {"name": name})
             H("POST", f"/api/admin/requests/{uid}/accept", cookie=cal, headers=same)
+            H("POST", "/api/equipes/tea-nirvalab/membres", {"pseudo": name, "role": "member"}, cookie=cal, headers=same)   # un ami accepté n'a que sa My Team (Cal, 09/10) : Cal le met dans Nirvalab
             toks[uid] = t
         A, B = toks.get("albane"), toks.get("bastien")
         ok(bool(cal and A and B), f"éléments, droits : Cal, Albane, Bastien entrent ({s0})")

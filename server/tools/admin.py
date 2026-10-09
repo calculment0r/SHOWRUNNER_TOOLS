@@ -98,15 +98,21 @@ def set_user(req, uid):
     return auth.public_user(u)
 
 
-def delete_user(req, uid):
-    """Détruire un compte (Admin → Personnes → Supprimer) : ses travaux en file s'en vont, ses connexions
-    se ferment, il sort des Teams ; ce qu'il a rangé reste dans les Workspaces (espaces.forget_user)."""
-    me = _admin(req)
-    gone = auth.delete_user(uid, me["id"])   # les refus d'abord : un refus ne retire aucun travail
-    for j in jobs.listing(limit=400):
+def supprimer_compte(uid: str, by: str) -> dict:
+    """Le seul chemin de la suppression d'un compte — Admin → Personnes → Supprimer, et le ménage
+    (server/tools/equipes.py, D7) : ses travaux en file s'en vont, ses connexions se ferment, il sort
+    des Teams ; ce qu'il a rangé reste dans les Workspaces (espaces.forget_user)."""
+    gone = auth.delete_user(uid, by)   # les refus d'abord : un refus ne retire aucun travail
+    for j in jobs.listing(active=True, limit=10 ** 6):
         if j.get("owner") == uid and j["state"] == "queued":
             jobs.cancel(j["id"])
-    return {"ok": True, "name": gone.get("name", uid), "teams": espaces.forget_user(uid)}
+    return {"name": gone.get("name", uid), "teams": espaces.forget_user(uid)}
+
+
+def delete_user(req, uid):
+    """Détruire un compte (Admin → Personnes → Supprimer) : supprimer_compte."""
+    me = _admin(req)
+    return {"ok": True, **supprimer_compte(uid, me["id"])}
 
 
 def user_devices(req, uid):

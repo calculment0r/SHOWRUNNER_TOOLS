@@ -659,6 +659,8 @@ est refusée : un tunnel pointé par erreur sur 8790 n'ouvre rien. Le contrôle 
 | `GET /api/admin/machines` · `POST /api/admin/instances/free {url}` · `POST /api/admin/ollama/unload` | instances, mémoire, familles chargées, ce que chacune prendrait, H3, le studio, le relais |
 | `GET · POST /api/admin/switches` | les interrupteurs déclarés (`config.declare_switch`), écrits dans `showrunner.local.json`, pris au redémarrage |
 | `GET /api/admin/storage` · `POST /api/admin/trash/empty` · `GET /api/admin/journal` | stockage, corbeille, journal |
+| `GET /api/admin/detruits` · `POST /api/admin/detruits/<e>/rendre {vers?}` | les Workspaces détruits, les rendre (§ 10 ; `server/tools/equipes.py`) |
+| `GET · POST /api/admin/menage` | le grand ménage (§ 10 ; `server/tools/equipes.py`) |
 
 La page a en tête la section **« 0 · Vue d'ensemble »** (09/10, `admin/tableau.js`, § 11) : toutes les Teams,
 leurs Workspaces, qui y crée quoi. Un compte qui n'est pas admin du portail n'a que deux sections : son
@@ -681,7 +683,36 @@ Admin → Teams.
   payante (coupée par défaut), un budget ; des membres `owner | admin | member | guest`
   (un guest est `viewer` ou `acteur`, réglé dans Admin → Personnes). Un Workspace
   (`esp-…`) est un lieu de travail d'une Team : un rôle par défaut, des rôles par membre
-  (`admin | editor | commenter | viewer`). Chaque compte a « Chez moi » / « Perso ».
+  (`admin | editor | commenter | viewer`) ; un membre voit **tous** les Workspaces de sa
+  Team (09/10 : plus de `none`, un `none` d'avant vaut `viewer`) ; un guest, ceux où on le met.
+- **My Team** (décisions de Cal du 09/10 : « on ne travaille pas en dehors d'une Team ») :
+  chaque compte a sa Team personnelle (`tea-perso-<id>`, Workspace « Général » ; « Chez
+  moi » / « Perso » avant — le ménage renomme ce qui porte encore le nom de naissance, jamais
+  un nom choisi : `renamed`). Un compte neuf n'a qu'elle : il n'entre plus d'office dans
+  Nirvalab. Elle invite si son propriétaire a le Studio (un compte Apps la garde seul, la
+  phrase mène à « Demander le Studio ») ; elle ne se détruit, ne s'archive ni ne se quitte.
+  Le nom d'une Team pour la personne : `label` (`espaces.label_of` : la My Team d'un autre
+  dit à qui elle est) — l'en-tête, Asset, Admin, la pastille GPU l'affichent.
+- **Détruire** — `POST /api/espaces/<e>/detruire {nom}` (qui gère sa Team, ou Cal ; jamais
+  Général ni le dernier Workspace ouvert d'une Team) et `POST /api/equipes/<t>/detruire {nom}`
+  (son propriétaire, ou Cal ; jamais une My Team ni Nirvalab : ses Workspaces, ses membres,
+  ses liens, son budget ; ses invités qui n'attendaient Cal que pour elle sont refusés, leur
+  alerte le dit) ; `nom` : le nom tapé. Rien n'est réécrit : la fiche passe dans
+  `destroyed_spaces` (`destroyed_teams`) et tout ce qui porte cet identifiant n'est plus à
+  personne, Cal compris (`espaces.gone` dans les juges d'`auth`, `library.check_create`, le
+  lien d'une planche) ; les objets vont à la corbeille (`library.bury`), les travaux en cours
+  s'arrêtent, qui l'avait pour dernier retombe sur sa My Team, les outils qui tiennent des
+  connexions les ferment (`espaces.QUAND_DETRUIT`). Cal le rend (Admin → Stockage,
+  `restore_space`) : le même identifiant, dans la My Team de son auteur principal (sinon la
+  sienne). Ce qu'un Workspace tient, magasin par magasin : `espaces.content_of`
+  (`CONTENT_DOCS`) ; `check.py isolement` fait échouer un magasin « champ » neuf qui n'y est pas.
+- **Le grand ménage** (« fresh start », Cal) — `GET /api/admin/menage` : l'aperçu (les
+  comptes créés par une Team — ceux qui attendent Cal compris —, les Teams partagées et leur contenu, les appartenances à
+  retirer, les Teams personnelles à renommer) ; `POST {comptes, teams, retirer_membres,
+  renommer, confirme: "MENAGE"}` : tout est jugé avant le premier geste, puis les Teams
+  détruites, les comptes supprimés (`admin.supprimer_compte`, le chemin d'Admin → Personnes ; un
+  invité qui attend Cal : `auth.refuse`), chaque Team restante réduite à son propriétaire, les
+  noms ; jamais Cal ni un admin.
 - **Cal valide les invités** (09/10, l'étude, « Fait le 09/10 ») : un pseudo neuf mis dans une Team
   par un autre que Cal (un admin du portail compte comme Cal) — `add_member`, ou le lien d'une Team
   fait par un non-Cal — naît `pending` avec `invited {by, team, role, guest?, spaces?, at}` ; sa
@@ -732,7 +763,8 @@ Admin → Teams.
   panneau Asset et les dépôts (`rapatrier` de `shell.js`) passent par là.
 - **Les pages** (`commun/shell.js`) : le Workspace de l'onglet (`espace()`,
   `avecEspace(url)`, `enTeteEspace()`) ; le sélecteur « TEAM / WORKSPACE » de l'en-tête
-  (ses Teams et leurs Workspaces, « + Nouveau Workspace », « Réglages de la Team ») ;
+  (ses Teams — les partagées, sa My Team, puis celles des autres, par leur `label` — et leurs Workspaces,
+  « + Nouveau Workspace », « Réglages de la Team ») ;
   `surEspace(cb)` : l'outil suit un changement sans recharger (sinon la page se
   recharge) ; `entrerEspace(id)` ; `espaceDocument(espace, id, {outil})` : un document
   ouvert reste dans le sien — l'en-tête le dit, toute requête qui le nomme y part (une

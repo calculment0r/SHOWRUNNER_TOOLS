@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """La migration vers Teams et Workspaces (docs/etudes/equipes_espaces.md § 5.1,
 étape 3) : la Team « Nirvalab » (propriétaire Cal), son Workspace « Général »,
-les amis Studio membres, une Team « Chez moi » par compte, chaque objet,
+les amis Studio membres, une Team personnelle (My Team) par compte, chaque objet,
 document et travail sans `space` dans Général. Idempotente : relancée, elle ne
 change rien. Le code : server/core/espaces.py, `migrate`.
 

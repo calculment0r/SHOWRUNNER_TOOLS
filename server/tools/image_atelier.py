@@ -972,6 +972,7 @@ def selftest(call, ok) -> None:
         _, _, I = H("POST", "/api/auth/enter", {"name": "Iris Atelier"})
         iris = (auth.find_pseudo("Iris Atelier") or {}).get("id", "")
         H("POST", f"/api/admin/requests/{iris}/accept", cookie=cal, headers=same)
+        H("POST", "/api/equipes/tea-nirvalab/membres", {"pseudo": "Iris Atelier", "role": "member"}, cookie=cal, headers=same)   # un ami accepté n'a que sa My Team (Cal, 09/10) : Cal le met dans Nirvalab
         I = I or H("POST", "/api/auth/enter", {"name": "Iris Atelier"}, headers=same)[2]
         for pseudo, mode in (("Oscar Atelier", "viewer"), ("Gaspard Atelier", "acteur")):
             H("POST", "/api/equipes/tea-nirvalab/membres", {"pseudo": pseudo, "role": "guest", "guest": mode, "spaces": ["esp-general"]},

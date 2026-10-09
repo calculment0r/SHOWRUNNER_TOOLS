@@ -272,7 +272,7 @@ function budgetPills(pill) {
   const b = S.budget;
   if (!b || !b.team || b.hidden || !b.total) return [];
   const t = b.total;
-  const who = b.personal ? 'chez moi' : b.name;
+  const who = b.label || b.name;   // My Team (D1, 09/10), ou le nom choisi ; celle d'un autre dit à qui elle est
   const spent = t.gpu_used_s + t.gpu_held_s;
   const unblock = (what) => (b.manage
     ? el('a', { class: 'acc-fix', href: href('admin/#teams') }, what)

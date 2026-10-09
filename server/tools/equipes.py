@@ -31,13 +31,30 @@ Team (pas seulement Cal) y règle la sienne ; chaque route juge qui gère quoi.
     GET  /api/auth/equipe/<jeton>                        ce que dit un lien (sans session)
     POST /api/auth/equipe/<jeton>                        l'ouvrir : une session qui attend (pseudo neuf) passe
 
+  Détruire (D4, décisions de Cal du 09/10 ; core/espaces.py, destroy_space / destroy_team) — ce qu'ils
+  tenaient va à la corbeille, Cal le rend :
+    POST /api/espaces/<e>/detruire {nom}                 un Workspace : qui gère sa Team, ou Cal ; jamais Général ni
+                                                         le dernier ouvert d'une Team ; `nom` : son nom, tapé
+    POST /api/equipes/<t>/detruire {nom}                 une Team : son propriétaire, ou Cal ; jamais une My Team ni
+                                                         Nirvalab ; ses Workspaces détruits, ses membres sortis, ses
+                                                         liens retirés, son budget effacé
+    GET  /api/admin/detruits                             (Cal) la corbeille des Workspaces détruits
+    POST /api/admin/detruits/<e>/rendre {vers?}          (Cal) le rendre, le même, dans la My Team de `vers` (par
+                                                         défaut son auteur s'il existe encore, sinon Cal)
+  Le grand ménage (D7, « fresh start », Cal) :
+    GET  /api/admin/menage                               l'aperçu, sur les données réelles : les comptes créés par une
+                                                         Team, les Teams partagées, les appartenances à retirer, les
+                                                         Teams personnelles à renommer « My Team »
+    POST /api/admin/menage {comptes, teams, retirer_membres, renommer, confirme: "MENAGE"}
+                                                         l'appliquer ; rend le rapport (journalisé)
+
   Le budget (étape 8 ; la réservation et conso.jsonl : core/jobs.py) :
     GET  /api/budget                                     la consommation du mois de la Team du Workspace
                                                          courant (l'accueil) ; un guest : rien (il ne calcule pas)
     GET  /api/equipes/<t>/budget                         la même, d'une Team ; qui gère : par personne, par Workspace
     POST /api/equipes/<t>/budget {gpu_s, api_credits, users: {uid: {gpu_s, api_credits} | null},
                                   spaces: {sid: …}}      le régler : le propriétaire, un admin de la Team, ou Cal
-                                                         (« Chez moi » : Cal) ; gpu_s vide = illimité
+                                                         (My Team : Cal) ; gpu_s vide = illimité
 """
 
 from __future__ import annotations
@@ -241,6 +258,172 @@ def r_redeem(req, tok):
     return espaces.redeem(u, tok)
 
 
+# ── détruire (D4) ───────────────────────────────────────────
+def r_space_destroy(req, sid):
+    return espaces.destroy_space(_who(req), sid, req.json().get("nom"))
+
+
+def r_team_destroy(req, tid):
+    return espaces.destroy_team(_who(req), tid, req.json().get("nom"))
+
+
+def _cal(req) -> dict:
+    """Les routes de Cal (sous /api/admin/ : la porte les refuse déjà à qui n'est pas admin) ; revérifié ici."""
+    u = _who(req)
+    if not auth.is_admin(u):
+        raise HttpError(403, "réservé à Cal")
+    return u
+
+
+def r_destroyed(req):
+    _cal(req)
+    return {"spaces": espaces.destroyed_list()}
+
+
+def r_restore(req, sid):
+    u = _cal(req)
+    vers = req.json().get("vers")
+    if vers is not None and not isinstance(vers, str):
+        raise HttpError(400, "vers : l'identifiant de la personne dont la My Team le reçoit")
+    return espaces.restore_space(u, sid, vers or None)
+
+
+# ── le grand ménage (D7, décision de Cal du 09/10 : « fresh start ») ──
+# « tous les gens qui se loguent n'ont que leur espace vierge ; tu laisses quand même ce que les gens
+# ont fait dans leur espace ». L'aperçu est calculé sur les données réelles ; l'application refait
+# chaque jugement (un compte qui n'est pas d'atelier, une Team qui ne se détruit pas : 400, rien n'est
+# fait), puis, dans cet ordre : détruit les Teams cochées (D4 : leur contenu à la corbeille), supprime
+# les comptes cochés (le chemin d'Admin → Personnes : admin.supprimer_compte ; un invité qui attend Cal,
+# celui de Refuser : auth.refuse), retire de chaque Team
+# restante ceux qui ne la possèdent pas, renomme les « Chez moi » d'avant. Jamais Cal ni un admin du
+# portail : ni supprimés, ni retirés. Les My Team et ce qu'elles tiennent restent.
+MENAGE_MOT = "MENAGE"
+
+
+def _spared(uid: str) -> bool:
+    """Le ménage ne touche jamais Cal ni un admin du portail."""
+    return uid == auth.admin_id() or auth.is_admin(auth.user(uid))
+
+
+def menage_preview(u) -> dict:
+    """(a) les comptes créés par une Team (`via: "equipe"`, auth.create_invited : l'atelier du 07/10 ;
+    ceux qui attendent encore la validation de Cal aussi, D5 : `invited`), leur date, qui les a faits,
+    leurs Teams ; (b) les Teams partagées : propriétaire, membres,
+    Workspaces, contenu ; (c) les appartenances à retirer (toute personne autre que le propriétaire,
+    sauf un admin du portail) ; (d) les Teams personnelles à renommer « My Team ». `suggest` : ce que
+    la page coche d'avance — les comptes ; une Team que ses membres (hors propriétaire) quittent tous
+    avec ces comptes (au moins un, ou son propriétaire en est)."""
+    teams = espaces.teams_of(u, detail=True, everyone=True)
+    where: dict[str, list] = {}
+    for t in teams:
+        for m in t.get("members") or []:
+            if m["id"] != t["owner"] or not t["personal"]:   # sa propre My Team n'est pas une Team « où on l'a mis »
+                where.setdefault(m["id"], []).append({"id": t["id"], "name": espaces.label_of(t, None), "role": m["role"]})
+    comptes = []
+    for x in auth.users_public():
+        pending = x.get("state") == "pending"
+        # créé par une Team : ajouté par pseudo ou entré par un lien (`via`) ; un invité qui attend Cal (`invited`) —
+        # une demande tapée à la porte, sans Team, n'en est pas (Admin → Demandes)
+        if not (x.get("via") == "equipe" or (pending and x.get("invited"))) or (pending and not x.get("invited")) or _spared(x["id"]):
+            continue
+        by = (auth.user(x["id"]) or {}).get("by") or (x.get("invited") or {}).get("by")
+        # un compte en attente n'a pas encore de Team qui compte (core/espaces.py ne voit qu'un compte actif) : là où on l'a mis
+        tms = [{"id": i["team"], "name": espaces.label_of(espaces.team(i["team"]) or {"name": i["team_name"]}, None), "role": i["role"]}
+               for i in espaces.invitations_of(x["id"])] if pending \
+            else where.get(x["id"], [])
+        comptes.append({"id": x["id"], "name": x["name"], "pseudo": x["pseudo"], "state": x["state"], "pending": pending,
+                        "guest": not x.get("perso"), "created": x.get("accepted") or x.get("created"), "by": by,
+                        "by_name": auth.display_name(by), "items": 0, "teams": tms})
+    cand = {c["id"] for c in comptes}
+    shared = [t for t in teams if not t["personal"]]
+    content = espaces.content_of({s["id"] for t in shared for s in t["spaces"]})
+    mine = espaces.content_of({espaces.personal_space_id(c["id"]) for c in comptes})
+    for c in comptes:   # ce qu'ils ont fait chez eux (leur My Team) : ça reste
+        k = mine.get(espaces.personal_space_id(c["id"])) or {}
+        c["items"] = k.get("objets", 0) + sum((k.get("documents") or {}).values())
+    rows = []
+    for t in shared:
+        others = [m for m in t.get("members") or [] if m["id"] != t["owner"]]
+        cs = [content.get(s["id"]) or {} for s in t["spaces"]]
+        rows.append({"id": t["id"], "name": t["name"], "owner": t["owner"], "owner_name": t["owner_name"],
+                     "archived": t["archived"], "plan": t["plan"],
+                     "members": [{"id": m["id"], "name": m["name"], "role": m["role"], "candidate": m["id"] in cand} for m in others],
+                     "spaces": [{"id": s["id"], "name": s["name"], "archived": s["archived"]} for s in t["spaces"]],
+                     "objets": sum(c.get("objets", 0) for c in cs), "octets": sum(c.get("octets", 0) for c in cs),
+                     "documents": sum(sum((c.get("documents") or {}).values()) for c in cs),
+                     "destroy": t["destroy"], "destroy_why": t["destroy_why"],
+                     "suggest": bool(t["destroy"] and all(m["id"] in cand for m in others) and (others or t["owner"] in cand))})
+    membres = [{"team": t["id"], "team_name": espaces.label_of(t, None), "id": m["id"], "name": m["name"], "role": m["role"]}
+               for t in teams for m in t.get("members") or [] if m["id"] != t["owner"] and m["role"] != "owner" and not _spared(m["id"])]
+    spared = sorted({m["name"] for t in teams for m in t.get("members") or [] if m["id"] != t["owner"] and _spared(m["id"])})
+    return {"comptes": sorted(comptes, key=lambda c: (c["created"] or "", c["name"].lower())), "teams": rows,
+            "membres": membres, "epargnes": spared, "renommer": espaces.rename_personal(dry=True), "mot": MENAGE_MOT}
+
+
+def r_menage(req):
+    return menage_preview(_cal(req))
+
+
+def r_menage_apply(req):
+    """Le ménage : tout est jugé avant le premier geste (tout ou rien pour les refus) ; le rapport dit
+    ce qui a été fait, et ce qui a échoué en route (rien ne s'annule : la corbeille rend les Workspaces)."""
+    from tools import admin
+    u = _cal(req)
+    d = req.json()
+    if d.get("confirme") != MENAGE_MOT:
+        raise HttpError(400, f"le ménage ne part que confirmé : tape {MENAGE_MOT}")
+    comptes, teams = d.get("comptes", []), d.get("teams", [])
+    for k, v in (("comptes", comptes), ("teams", teams)):
+        if not isinstance(v, list) or len(v) > 2000 or not all(isinstance(x, str) for x in v):
+            raise HttpError(400, f"{k} : une liste d'identifiants")
+    for k in ("retirer_membres", "renommer"):
+        if not isinstance(d.get(k, False), bool):
+            raise HttpError(400, f"{k} : vrai ou faux")
+    comptes, teams = list(dict.fromkeys(comptes)), list(dict.fromkeys(teams))
+    plan = menage_preview(u)
+    spared = [x for x in comptes if _spared(x)]
+    if spared:
+        raise HttpError(400, "le ménage ne supprime jamais Cal ni un admin du portail : " + ", ".join(auth.display_name(x) for x in spared))
+    cand = {c["id"] for c in plan["comptes"]}
+    bad = [x for x in comptes if x not in cand]
+    if bad:
+        raise HttpError(400, "pas des comptes créés par une Team (ceux-là se suppriment dans Admin → Personnes) : "
+                        + ", ".join(auth.display_name(x) or x for x in bad[:8]))
+    rows = {t["id"]: t for t in plan["teams"]}
+    badt = [x for x in teams if not (rows.get(x) or {}).get("destroy")]
+    if badt:
+        raise HttpError(400, "ces Teams ne se détruisent pas : " + " ; ".join(
+            f"{rows[x]['name']} ({rows[x]['destroy_why']})" if x in rows else f"{x} (pas une Team partagée)" for x in badt[:8]))
+    rep: dict = {"teams": [], "comptes": [], "membres": [], "renommees": [], "erreurs": []}
+    for tid in teams:
+        try:
+            r = espaces.destroy_team(u, tid, typed=False)["destroyed"]
+            rep["teams"].append({"id": tid, "name": r["name"], "spaces": len(r["spaces"]), "objets": r["objets"]})
+        except HttpError as e:
+            rep["erreurs"].append(f"Team {rows[tid]['name']} : {e.message}")
+    names = {c["id"]: c["name"] for c in plan["comptes"]}
+    for uid in comptes:
+        x = auth.user(uid)
+        try:
+            if x is None:   # un invité qui n'attendait que sa Team, refusé avec elle (espaces.destroy_team, _drop_waiting)
+                rep["comptes"].append({"id": uid, "name": names[uid], "avec_team": True})
+            elif x.get("state") == "pending":   # un invité qui attend Cal : le chemin de Refuser (Admin → Demandes)
+                auth.refuse(uid, u["id"])
+                rep["comptes"].append({"id": uid, "name": names[uid], "attente": True})
+            else:
+                r = admin.supprimer_compte(uid, u["id"])
+                rep["comptes"].append({"id": uid, "name": r["name"]})
+        except HttpError as e:
+            rep["erreurs"].append(f"compte {names.get(uid) or uid} : {e.message}")
+    if d.get("retirer_membres"):
+        rep["membres"] = espaces.strip_members(spare=_spared)
+    if d.get("renommer"):
+        rep["renommees"] = espaces.rename_personal()
+    auth.journal("ménage", user=u["id"], comptes=[x["id"] for x in rep["comptes"]], teams=[x["id"] for x in rep["teams"]],
+                 membres=len(rep["membres"]), renommees=len(rep["renommees"]), erreurs=rep["erreurs"])
+    return rep
+
+
 # ── le budget ───────────────────────────────────────────────
 GUEST_BUDGET_WHY = "guest : tu ne lances pas de calcul — la consommation de la Team est à ses membres"
 
@@ -249,9 +432,11 @@ def _budget_out(u, tid: str, space: str | None = None) -> dict:
     manage = espaces.can_manage(u, tid)
     out = jobs.budget_view(tid, u, space, detail=manage)
     t = espaces.team(tid) or {}
+    if t:   # le nom pour la personne : la My Team d'un autre dit à qui elle est (l'accueil, sa pastille GPU)
+        out["label"] = espaces.label_of(t, (u or {}).get("id"))
     out["manage"] = manage and (not t.get("personal") or auth.is_admin(u))
     if manage and not out["manage"]:
-        out["manage_why"] = "le budget de « Chez moi » : Cal le règle"
+        out["manage_why"] = "le budget de My Team : Cal le règle"
     return out
 
 
@@ -310,6 +495,12 @@ def register(app) -> None:
     app.route("POST", "/api/espaces/{sid}/rapatrier", r_rapatrier)
     app.route("GET", "/api/auth/equipe/{tok}", r_invite_info)
     app.route("POST", "/api/auth/equipe/{tok}", r_redeem)
+    app.route("POST", "/api/espaces/{sid}/detruire", r_space_destroy)
+    app.route("POST", "/api/equipes/{tid}/detruire", r_team_destroy)
+    app.route("GET", "/api/admin/detruits", r_destroyed)
+    app.route("POST", "/api/admin/detruits/{sid}/rendre", r_restore)
+    app.route("GET", "/api/admin/menage", r_menage)
+    app.route("POST", "/api/admin/menage", r_menage_apply)
 
 
 # ── le contrôle (tools/check.py) ────────────────────────────
@@ -369,6 +560,9 @@ def selftest(call, ok) -> None:
         _validation(ok, H, same)
         _depart(ok, H, same)
         _budget(ok, H, same)
+        _my_team(ok, H, same)
+        _detruire(ok, H, same)
+        _menage(ok, H, same)
         _migration(ok, tempfile, shutil, json, hashlib, Path)
     finally:
         config.CFG["auth"] = before["auth"]
@@ -408,7 +602,7 @@ def _http(ok, H, same) -> None:
     _, _, A = H("POST", "/api/auth/enter", {"name": "Ana Essai"}, headers=same)
     s, me, _ = G("/api/auth/me", A)
     names = sorted(x["name"] for x in me.get("teams", []))
-    ok(s == 200 and names == ["Chez moi", "Studio Essai"] and (me.get("workspace") or {}).get("team") == tid,
+    ok(s == 200 and names == ["My Team", "Studio Essai"] and (me.get("workspace") or {}).get("team") == tid,
        f"équipes : /api/auth/me rend ses Teams et le Workspace courant ({names}, {(me.get('workspace') or {}).get('id')})")
 
     # un guest : refusé tant que les gardes du calcul et de la bibliothèque ne sont pas là
@@ -419,7 +613,7 @@ def _http(ok, H, same) -> None:
     s, d, _ = P(f"/api/equipes/{tid}/membres", {"pseudo": "Gus Essai", "role": "guest", "guest": "viewer", "spaces": [s1]})
     ok(s == 200, f"équipes : les gardes prêtes, un guest viewer ({s} {err(d)})")
     gus = auth.user("gus-essai")
-    ok(gus and gus.get("perso") is False and gus["access"] == "apps", f"équipes : un guest n'a pas de « Chez moi » ({gus})")
+    ok(gus and gus.get("perso") is False and gus["access"] == "apps", f"équipes : un guest n'a pas de My Team ({gus})")
     _, _, gus_tok = H("POST", "/api/auth/enter", {"name": "Gus Essai"}, headers=same)
     s, d, _ = P(f"/api/equipes/{tid}/membres", {"pseudo": "Gia Essai", "role": "guest", "guest": "acteur", "spaces": [s1]})
     ok(s == 200, f"équipes : un guest acteur ({s} {err(d)})")
@@ -472,8 +666,18 @@ def _http(ok, H, same) -> None:
        f"équipes : l'admin du Workspace y fait un guest — un pseudo neuf, qui attend Cal (D5) ({s} {err(d)})")
     s, d, _ = P(f"/api/equipes/{tid}/membres", {"pseudo": "Ivo Essai", "role": "member"}, tok=A)
     ok(s == 403, f"équipes : … mais pas un membre de la Team ({s} {err(d)[:60]})")
+    # D3 (Cal, 09/10) : un membre voit tous les Workspaces de sa Team — « none » (sur invitation) ne se pose plus,
+    # et un « none » d'avant vaut lecteur
     s, d, _ = P(f"/api/espaces/{s2}/membres/ana-essai", {"role": "none"})
-    ok(s == 200 and not espaces.can_view(ana, s2), f"équipes : « none » : dehors ({s})")
+    s2_, d2, _ = P(f"/api/espaces/{s2}", {"default_role": "none"})
+    s3_, d3, _ = P(f"/api/equipes/{tid}/espaces", {"name": "Caché", "default_role": "none"})
+    ok(s == 400 and s2_ == 400 and s3_ == 400 and "voit tous ses Workspaces" in err(d2) and espaces.can_edit(ana, s2),
+       f"équipes : « none » refusé partout, la phrase dit pourquoi (D3) ({s} {s2_} {s3_} {err(d2)[:60]})")
+    with espaces._lock:   # un rôle « none » d'avant le 09/10, dans le fichier
+        espaces._data()["spaces"][s2]["members"]["ana-essai"] = {"role": "none"}
+        espaces._save()
+    ok(espaces.can_view(ana, s2) and not espaces.can_comment(ana, s2) and espaces.space_role(ana, s2) == "viewer",
+       "équipes : un « none » d'avant vaut lecteur : le membre voit le Workspace (D3)")
     P(f"/api/espaces/{s2}/membres/ana-essai", {"role": None})
     ok(espaces.can_edit(ana, s2), "équipes : null : le rôle par défaut du Workspace revient")
 
@@ -588,7 +792,7 @@ def _http(ok, H, same) -> None:
         auth._ip = real_ip
     leo = auth.user("leo-essai")
     ok(s == 200 and r.get("accepted") and r.get("role") == "guest" and leo["state"] == "active" and leo.get("perso") is False
-       and leo.get("access") == "apps", f"équipes : le lien accepte le pseudo, guest acteur, sans « Chez moi » ({s} {err(r)})")
+       and leo.get("access") == "apps", f"équipes : le lien accepte le pseudo, guest acteur, sans My Team ({s} {err(r)})")
     ok(espaces.can_edit(leo, s1) and not espaces.can_compute(leo, s1, "cpu"), "équipes : le guest du lien modifie, ne calcule pas")
     s, me, _ = G("/api/auth/me", L)
     ok(s == 200 and [x["name"] for x in me.get("teams", [])] == ["Studio Essai"], f"équipes : il ne voit que sa Team ({s})")
@@ -599,8 +803,9 @@ def _http(ok, H, same) -> None:
     ok(s == 200 and s2_ == 410, f"équipes : un lien retiré ne s'ouvre plus ({s}, {s2_})")
     s, d, _ = P(f"/api/equipes/{tid}/invitations", {"role": "member", "hours": 5})
     ok(s == 400, f"équipes : une durée hors liste est refusée ({s})")
-    s, d, _ = P(f"/api/equipes/tea-perso-cal/invitations", {"role": "member", "hours": 24})
-    ok(s == 409 and "personnelle" in err(d), f"équipes : « Chez moi » n'invite personne ({s})")
+    s, d, _ = P("/api/equipes/tea-perso-ana-essai/invitations", {"role": "member", "hours": 24})
+    ok(s == 409 and "My Team" in err(d) and "Apps" in err(d) and "Studio" in err(d),
+       f"équipes : la My Team d'un compte Apps n'invite personne, Cal compris (D2) ({s} {err(d)[:80]})")
 
     # retirer ; partir
     s, d, _ = P(f"/api/equipes/{tid}/membres/gus-essai/retirer")
@@ -752,9 +957,12 @@ def _depart(ok, H, same) -> None:
     err = lambda d: d.get("error", "") if isinstance(d, dict) else str(d)[:80]   # noqa: E731
     _, _, adm = H("POST", "/api/auth/enter", {"name": "nico007"}, headers=same)
     toks = {}
-    # trois comptes créés par Cal : deux Studio (membres de Nirvalab, la Team de l'instance), un Apps (seul chez lui)
+    # trois comptes créés par Cal : deux Studio, qu'il met dans Nirvalab (un compte neuf n'a que sa My Team : Cal,
+    # 09/10), un Apps (seul chez lui)
     for name, acc in (("Sam Depart", "studio"), ("Noa Depart", "studio"), ("Ugo Depart", "apps")):
         s, d, _ = H("POST", "/api/admin/users", {"name": name, "access": acc}, cookie=adm, headers=same)
+        if acc == "studio":
+            H("POST", "/api/equipes/tea-nirvalab/membres", {"pseudo": name, "role": "member"}, cookie=adm, headers=same)
         _, _, toks[name.split()[0]] = H("POST", "/api/auth/enter", {"name": name}, headers=same)
         ok(s == 200 and toks[name.split()[0]], f"départ : {name}, un compte {acc}, entre ({s} {err(d)})")
     sam, noa, ugo = toks["Sam"], toks["Noa"], toks["Ugo"]
@@ -820,7 +1028,7 @@ def _depart(ok, H, same) -> None:
     s, r, _ = P(f"/api/espaces/{sid}/rapatrier", {"items": [src.get("id")]})
     cp = (r.get("items") or [{}])[0] if s == 200 else {}
     ok(s == 200 and cp.get("space") == sid and ((cp.get("origin") or {}).get("from") or {}).get("item") == src.get("id")
-       and library.get(src["id"])["space"] == perso, f"départ : un objet de « Perso » rapatrié, l'original reste ({s} {err(r)})")
+       and library.get(src["id"])["space"] == perso, f"départ : un objet de My Team rapatrié, l'original reste ({s} {err(r)})")
     # 7. le texte du brief (un PDF : lu par le portail, server/tools/documents.py ; le brief.md aussi)
     s, tx, _ = G(f"/api/library/{brief.get('id')}/texte", hd=here)
     ok(s == 200 and "trois personnages" in tx.get("text", ""), f"départ : le texte de brief.md ({s} {err(tx)})")
@@ -845,7 +1053,7 @@ def _depart(ok, H, same) -> None:
     ok(s == 200 and {up[k].get("id") for k in up} | {brief.get("id"), cp.get("id")} <= got and src.get("id") not in got,
        f"départ : Asset du Workspace neuf : tout ce qui a été rangé ({len(got)} objets)")
     _, pm, _ = G("/api/library?limit=100", hd={"X-SR-Espace": perso})
-    ok({i["id"] for i in pm.get("items", [])} == {src.get("id")}, "départ : rien n'est entré dans « Perso » que l'objet d'avant")
+    ok({i["id"] for i in pm.get("items", [])} == {src.get("id")}, "départ : rien n'est entré dans My Team que l'objet d'avant")
     s, eq, _ = G("/api/equipes", noa)
     mt = next((x for x in eq.get("teams", []) if x["id"] == tid), {})
     ok(s == 200 and mt.get("role") == "member" and [x["name"] for x in mt.get("spaces", [])] == ["Repérages"],
@@ -954,7 +1162,7 @@ def _budget(ok, H, same) -> None:
         s, d, _ = P(f"/api/equipes/{tid}/budget", {"api_credits": None})
         ok(s == 400, f"budget : des crédits API vides sont refusés (0 : coupée) ({s})")
         s, d, _ = P("/api/equipes/tea-perso-bea-essai/budget", {"gpu_s": 99999}, tok=B)
-        ok(s == 403 and "Cal" in err(d), f"budget : « Chez moi » : Cal seul ({s} {err(d)[:60]})")
+        ok(s == 403 and "Cal" in err(d), f"budget : My Team : Cal seul ({s} {err(d)[:60]})")
 
         # la réservation, puis la mesure
         j = sub("budget.essai", bea, s1, 60, g="m", s=0.3)
@@ -1127,6 +1335,449 @@ def _budget(ok, H, same) -> None:
                 jobs._dur.pop(d, None)
 
 
+def _png() -> bytes:
+    import io
+
+    from PIL import Image
+    buf = io.BytesIO()
+    Image.new("RGB", (48, 32), (90, 140, 200)).save(buf, "PNG")
+    return buf.getvalue()
+
+
+def _my_team(ok, H, same) -> None:
+    """D1, D2, D3 (décisions de Cal du 09/10) : la Team personnelle s'appelle « My Team » ; le
+    renommage des « Chez moi » d'avant, idempotent, qui épargne un nom choisi ; My Team invite si
+    son propriétaire a le Studio (un compte Apps la garde seul, et la phrase le dit) ; elle ne se
+    détruit pas et ne se quitte pas ; les membres d'une Team voient tous ses Workspaces."""
+    err = lambda d: d.get("error", "") if isinstance(d, dict) else str(d)[:80]   # noqa: E731
+    _, _, adm = H("POST", "/api/auth/enter", {"name": "nico007"}, headers=same)
+    P = lambda path, body=None, tok=adm, hd=None: H("POST", path, body if body is not None else {}, cookie=tok,   # noqa: E731
+                                                     headers={**same, **(hd or {})})
+    G = lambda path, tok=adm, hd=None: H("GET", path, cookie=tok, headers=hd or {})   # noqa: E731
+    toks = {}
+    for name, acc in (("Mia Myteam", "studio"), ("Noe Myteam", "studio"), ("Abi Myteam", "apps")):
+        P("/api/admin/users", {"name": name, "access": acc})
+        _, _, toks[name.split()[0]] = H("POST", "/api/auth/enter", {"name": name}, headers=same)
+        H("GET", "/api/auth/me", cookie=toks[name.split()[0]])   # sa première requête : sa My Team naît
+    mia, noe, abi = toks["Mia"], toks["Noe"], toks["Abi"]
+
+    # D1 : un compte neuf reçoit « My Team », son Workspace « Général » — et rien d'autre : ni Nirvalab, ni Général
+    # (« tous les gens qui se loguent n'ont que leur espace vierge »), qu'il soit ajouté d'avance, accepté à la porte,
+    # ou que Cal lui ouvre le Studio
+    P("/api/admin/users/abi-myteam", {"access": "studio"})
+    H("POST", "/api/auth/enter", {"name": "Pat Myteam"}, headers=same)
+    P("/api/admin/requests/pat-myteam/accept")
+    _, _, pat = H("POST", "/api/auth/enter", {"name": "Pat Myteam"}, headers=same)
+    H("GET", "/api/auth/me", cookie=pat)   # sa première requête acceptée : sa My Team naît
+    alone = {k: sorted(t["id"] for t in espaces.teams_of(auth.user(k))) for k in ("mia-myteam", "abi-myteam", "pat-myteam")}
+    ok(alone == {k: [espaces.personal_team_id(k)] for k in alone} and not any(espaces.can_view(auth.user(k), "esp-general") for k in alone),
+       f"my team : un compte neuf n'a que sa My Team — ajouté d'avance, Studio ouvert, accepté à la porte ({alone})")
+    P("/api/admin/users/abi-myteam", {"access": "apps"})
+    s, me, _ = G("/api/auth/me", mia)
+    mt = next((t for t in me.get("teams", []) if t["id"] == "tea-perso-mia-myteam"), {})
+    ok(s == 200 and mt.get("name") == "My Team" and mt.get("personal") and [x["name"] for x in mt.get("spaces", [])] == ["Général"],
+       f"my team : un compte neuf a « My Team », Workspace « Général » ({mt.get('name')} {[x['name'] for x in mt.get('spaces', [])]})")
+    ok(espaces.team("tea-perso-mia-myteam")["name"] == espaces.PERSONAL_NAME and not espaces.team("tea-perso-mia-myteam").get("renamed"),
+       "my team : le nom de naissance n'est pas un nom choisi")
+
+    # D1 : le renommage des « Chez moi » d'avant — idempotent, il épargne un nom choisi
+    with espaces._lock:   # deux Teams comme avant le 09/10 : nommées « Chez moi », jamais renommées
+        db = espaces._data()
+        for tid in ("tea-perso-mia-myteam", "tea-perso-noe-myteam"):
+            db["teams"][tid]["name"] = espaces.PERSONAL_OLD
+            db["teams"][tid].pop("renamed", None)
+        espaces._save()
+    s, d, _ = P("/api/equipes/tea-perso-noe-myteam", {"name": "Atelier Noé"}, tok=noe)
+    s2, d2, _ = P("/api/equipes/tea-perso-noe-myteam", {"name": espaces.PERSONAL_OLD}, tok=noe)
+    ok(s == 200 and s2 == 200 and d2.get("name") == espaces.PERSONAL_OLD and espaces.team("tea-perso-noe-myteam").get("renamed"),
+       f"my team : son propriétaire la renomme (ici, de nouveau « Chez moi », par choix) ({s} {s2} {err(d) or err(d2)})")
+    dry = {x["id"] for x in espaces.rename_personal(dry=True)}
+    ok("tea-perso-mia-myteam" in dry and "tea-perso-noe-myteam" not in dry and espaces.team("tea-perso-mia-myteam")["name"] == espaces.PERSONAL_OLD,
+       f"my team : à blanc, la Team jamais renommée est à renommer, le nom choisi non, rien ne change ({sorted(dry)[:4]})")
+    done = {x["id"] for x in espaces.rename_personal()}
+    again = espaces.rename_personal()
+    ok("tea-perso-mia-myteam" in done and espaces.team("tea-perso-mia-myteam")["name"] == "My Team"
+       and espaces.team("tea-perso-noe-myteam")["name"] == espaces.PERSONAL_OLD and again == [],
+       f"my team : renommée « My Team », le nom choisi épargné, une seconde passe ne trouve rien ({again})")
+
+    # D2 : My Team invite si le propriétaire a le Studio ; un compte Apps la garde seul, et la phrase mène à la demande
+    s, eq, _ = G("/api/equipes", noe)
+    nt = next((t for t in eq.get("teams", []) if t["id"] == "tea-perso-noe-myteam"), {})
+    ok(s == 200 and nt.get("invite") is True and nt.get("rename") is True and nt.get("destroy") is False
+       and "maison" in (nt.get("destroy_why") or ""), f"my team : Studio — elle invite, se renomme, ne se détruit pas ({nt.get('invite_why')})")
+    s, d, _ = P("/api/equipes/tea-perso-noe-myteam/membres", {"pseudo": "Mia Myteam", "role": "admin"}, tok=noe)
+    ok(s == 200 and espaces.team_role(auth.user("mia-myteam"), "tea-perso-noe-myteam") == "admin",
+       f"my team : son propriétaire Studio y met quelqu'un (admin) ({s} {err(d)})")
+    s, inv, _ = P("/api/equipes/tea-perso-noe-myteam/invitations", {"role": "member", "hours": 24}, tok=noe)
+    ok(s == 200 and inv.get("token"), f"my team : … et fait un lien d'invitation ({s} {err(inv)})")
+    s, eq, _ = G("/api/equipes", abi)
+    at = next((t for t in eq.get("teams", []) if t["id"] == "tea-perso-abi-myteam"), {})
+    why = at.get("invite_why") or ""
+    s1, d1, _ = P("/api/equipes/tea-perso-abi-myteam/membres", {"pseudo": "Mia Myteam", "role": "member"}, tok=abi)
+    s2, d2, _ = P("/api/equipes/tea-perso-abi-myteam/invitations", {"role": "member", "hours": 24}, tok=abi)
+    ok(at.get("invite") is False and "Apps" in why and "Demander le Studio" in why and s1 == 409 and err(d1) == why and s2 == 409,
+       f"my team : un compte Apps la garde seul ; la phrase dit pourquoi et mène à la demande de Studio ({s1} {s2} {why})")
+    s, d, _ = P("/api/equipes/tea-perso-abi-myteam/membres", {"pseudo": "Mia Myteam", "role": "member"})
+    ok(s == 409 and "Apps" in err(d), f"my team : Cal non plus n'y met personne (le Studio est au compte) ({s} {err(d)[:60]})")
+    s, d, _ = P("/api/equipes/tea-perso-noe-myteam", {"name": "Pris par Mia"}, tok=mia)
+    ok(s == 403 and "propriétaire" in err(d), f"my team : un admin de la Team ne la renomme pas (son propriétaire) ({s} {err(d)})")
+    s, d, _ = P("/api/equipes/tea-perso-noe-myteam/detruire", {"nom": espaces.PERSONAL_OLD}, tok=noe)
+    ok(s == 409 and "maison" in err(d), f"my team : elle ne se détruit pas ({s} {err(d)})")
+    s, d, _ = P("/api/equipes/tea-perso-noe-myteam/membres/noe-myteam/retirer", tok=noe)
+    ok(s == 409, f"my team : son propriétaire ne la quitte pas ({s})")
+    s, d, _ = P("/api/equipes/tea-perso-noe-myteam/membres", {"pseudo": "Abi Myteam", "role": "member"}, tok=noe)
+    s2, pp, _ = G("/api/equipes/personnes", noe)
+    ok(s == 200 and s2 == 200 and "abi-myteam" in [x["id"] for x in pp.get("people", [])],
+       f"my team : qui y est compte parmi les gens de mes Teams — Abi n'est que là ({s} {err(d)} {[x['id'] for x in pp.get('people', [])][:6]})")
+
+    # D3 : les membres d'une Team voient tous ses Workspaces — ceux d'après leur arrivée compris
+    s, t, _ = P("/api/equipes", {"name": "Bords Myteam"}, tok=noe)
+    s2, d2, _ = P("/api/equipes", {"name": "Pas Myteam"}, tok=abi)
+    ok(s == 200 and t.get("owner") == "noe-myteam" and s2 == 403 and "Studio" in err(d2),
+       f"my team : un compte Studio crée d'autres Teams ; un compte Apps non, et la phrase dit pourquoi ({s} {s2} {err(d2)[:60]})")
+    tid = t["id"]
+    P(f"/api/equipes/{tid}/membres", {"pseudo": "Abi Myteam", "role": "member"}, tok=noe)
+    s, w2, _ = P(f"/api/equipes/{tid}/espaces", {"name": "Tournage"}, tok=noe)
+    s, w3, _ = P("/api/equipes/tea-perso-noe-myteam/espaces", {"name": "Montage"}, tok=noe)
+    ok(w2.get("default_role") == "editor" and w3.get("default_role") == "editor",
+       f"my team : un Workspace neuf s'ouvre à tout membre (éditeur par défaut) ({w2.get('default_role')})")
+    s, me, _ = G("/api/auth/me", abi)
+    bt = next((x for x in me.get("teams", []) if x["id"] == tid), {})
+    ok(sorted(x["name"] for x in bt.get("spaces", [])) == ["Général", "Tournage"] and all(x["can"]["edit"] for x in bt["spaces"]),
+       f"my team : un membre voit tous les Workspaces de la Team, celui d'après son arrivée aussi ({[x['name'] for x in bt.get('spaces', [])]})")
+    s, me, _ = G("/api/auth/me", mia)
+    nt = next((x for x in me.get("teams", []) if x["id"] == "tea-perso-noe-myteam"), {})
+    ok(len(nt.get("spaces", [])) == 2 and nt.get("role") == "admin",
+       f"my team : dans la My Team d'un autre aussi, tous ses Workspaces ({[x['name'] for x in nt.get('spaces', [])]})")
+    own = next((x for x in me.get("teams", []) if x["id"] == "tea-perso-mia-myteam"), {})
+    ok(nt.get("label") == f"{nt.get('name')} · Noe Myteam" and own.get("label") == "My Team",
+       f"my team : le menu de l'en-tête dit à qui est la My Team d'un autre, pas la sienne ({nt.get('label')} / {own.get('label')})")
+    s, b, _ = G("/api/budget", mia, {"X-SR-Espace": nt["spaces"][0]["id"]})
+    ok(s == 200 and b.get("label") == nt.get("label"), f"my team : la pastille GPU de l'accueil aussi ({s} {b.get('label')})")
+    s, d, _ = P(f"/api/equipes/{tid}/membres", {"pseudo": "Gil Myteam", "role": "guest", "guest": "viewer", "spaces": [w2["id"]]}, tok=noe)
+    P("/api/admin/requests/gil-myteam/accept")   # un pseudo neuf mis par un autre que Cal attend sa validation (D5)
+    gil = auth.user("gil-myteam")
+    ok(s == 200 and espaces.can_view(gil, w2["id"]) and not espaces.can_view(gil, t["spaces"][0]["id"]),
+       f"my team : un guest reste aux Workspaces où on le met ({s} {err(d)})")
+
+
+def _detruire(ok, H, same) -> None:
+    """D4 : détruire un Workspace et une Team — les droits, les refus (Général, le dernier Workspace,
+    une My Team, Nirvalab), le nom tapé ; ce qu'ils tenaient à la corbeille, à personne (Cal compris),
+    les travaux arrêtés, qui l'avait pour dernier chez soi ; Cal le rend, le même, dans la My Team de
+    son auteur (sinon la sienne) ; une Team : ses membres sortis, ses liens retirés, son budget effacé."""
+    import threading
+    import time
+
+    from core import library
+    err = lambda d: d.get("error", "") if isinstance(d, dict) else str(d)[:80]   # noqa: E731
+    _, _, adm = H("POST", "/api/auth/enter", {"name": "nico007"}, headers=same)
+    P = lambda path, body=None, tok=adm, hd=None: H("POST", path, body if body is not None else {}, cookie=tok,   # noqa: E731
+                                                     headers={**same, **(hd or {})})
+    G = lambda path, tok=adm, hd=None: H("GET", path, cookie=tok, headers=hd or {})   # noqa: E731
+    up = lambda tok, sid, name: H("PUT", f"/api/library/upload?name={name}.png&title={name}", raw=_png(), cookie=tok,   # noqa: E731
+                                  headers={**same, "X-SR-Espace": sid})[1]
+    toks = {}
+    for name in ("Pia Detruit", "Rex Detruit", "Zoe Detruit", "Sid Detruit"):
+        P("/api/admin/users", {"name": name, "access": "studio"})
+        _, _, toks[name.split()[0]] = H("POST", "/api/auth/enter", {"name": name}, headers=same)
+        H("GET", "/api/auth/me", cookie=toks[name.split()[0]])
+    pia, rex, zoe, sidt = toks["Pia"], toks["Rex"], toks["Zoe"], toks["Sid"]
+    s, t, _ = P("/api/equipes", {"name": "Plateau Detruit"}, tok=pia)
+    tid, w1 = t["id"], t["spaces"][0]["id"]
+    w2 = P(f"/api/equipes/{tid}/espaces", {"name": "Plateau"}, tok=pia)[1]["id"]
+    P(f"/api/equipes/{tid}/membres", {"pseudo": "Rex Detruit", "role": "member"}, tok=pia)
+    here = {"X-SR-Espace": w2}
+    img = up(pia, w2, "decor")
+    img_rex = up(rex, w2, "repere")
+    s1, proj, _ = P("/api/music/projects", {"name": "Bande Detruit"}, tok=pia, hd=here)
+    s2, board, _ = P("/api/ideation/boards", {"name": "Planche Detruit"}, tok=rex, hd=here)
+    s3, _, _ = P("/api/asset/folders", {"name": "Repérages"}, tok=pia, hd=here)
+    ok(img.get("space") == w2 and img_rex.get("space") == w2 and s1 == 200 and s2 == 200 and s3 == 200,
+       f"détruire : un Workspace garni — deux objets, un projet ODIO, une planche, un dossier ({s1} {s2} {s3} {err(proj) or err(board)})")
+    P("/api/espaces/courant", {"workspace": w2}, tok=rex)
+    # un travail en cours dans ce Workspace : il s'arrêtera
+    gate = threading.Event()
+
+    def slow(ctx):
+        while not gate.is_set():
+            ctx.check()
+            time.sleep(0.02)
+    jobs.register("detruire.essai", slow, lane="cpu", cost="cpu")
+    auth.set_current(auth.user("pia-detruit"))
+    auth.set_current_space(w2)
+    try:
+        job = jobs.submit("detruire.essai", {}, title="détruire", tool="check")
+    finally:
+        auth.set_current(None)
+        auth.set_current_space(None)
+    s, sole, _ = P("/api/equipes", {"name": "Seule Detruit"}, tok=zoe)
+
+    try:
+        # les refus : les droits, Général, le dernier Workspace, le nom tapé
+        s, d, _ = P(f"/api/espaces/{w2}/detruire", {"nom": "Plateau"}, tok=rex)
+        ok(s == 403 and "admin de sa Team" in err(d), f"détruire : un membre ne détruit pas un Workspace ({s} {err(d)})")
+        s, d, _ = P(f"/api/espaces/{w2}/detruire", {"nom": "Plateau"}, tok=zoe)
+        ok(s == 404, f"détruire : hors de la Team, le Workspace n'existe pas ({s})")
+        s, d, _ = P("/api/espaces/esp-general/detruire", {"nom": "Général"})
+        ok(s == 409 and "par défaut" in err(d), f"détruire : Général (l'espace par défaut de l'instance), jamais ({s} {err(d)})")
+        s, d, _ = P(f"/api/espaces/{sole['spaces'][0]['id']}/detruire", {"nom": "Général"}, tok=zoe)
+        ok(s == 409 and "dernier Workspace" in err(d) and "détruis la Team" in err(d),
+           f"détruire : jamais le dernier Workspace ouvert d'une Team, et la phrase dit quoi faire ({s} {err(d)})")
+        s, d, _ = P(f"/api/espaces/{w2}/detruire", {"nom": "plateau"}, tok=pia)
+        ok(s == 400 and "« Plateau »" in err(d) and espaces.space(w2), f"détruire : le nom tapé exact, sinon rien ({s} {err(d)})")
+        s, eq, _ = G("/api/equipes", rex)
+        rt = next((x for x in eq.get("teams", []) if x["id"] == tid), {})
+        wsr = next((x for x in rt.get("spaces", []) if x["id"] == w2), {})
+        ok(wsr.get("can", {}).get("destroy") is False and "admin de sa Team" in (wsr.get("why") or {}).get("destroy", "")
+           and rt.get("destroy") is False, f"détruire : la page sait pourquoi le bouton est grisé ({(wsr.get('why') or {}).get('destroy')})")
+
+        # le propriétaire détruit : tout est à la corbeille, à personne
+        s, d, _ = P(f"/api/espaces/{w2}/detruire", {"nom": " Plateau "}, tok=pia)
+        ok(s == 200 and d["destroyed"]["objets"] >= 2 and espaces.space(w2) is None and espaces.gone(w2),
+           f"détruire : le propriétaire détruit le Workspace ({s} {err(d) or d.get('destroyed')})")
+        ok(library.see(img["id"]) is None and (library.trash_root() / img["id"] / "item.json").is_file()
+           and (library.trash_root() / img_rex["id"]).is_dir(), "détruire : ses objets sont à la corbeille")
+        # le tableau de bord de Cal (server/tools/tableau.py) : ce qu'il tenait n'est ni listé, ni « hors des Teams »
+        # (les objets sont à la corbeille, que l'inventaire ne liste pas ; ses documents ne sont plus à personne)
+        s, tb, _ = G("/api/tableau?toutes=1")
+        s2, fd, _ = G("/api/tableau/cherche?q=Detruit&toutes=1")
+        lost = [x["id"] for x in ((tb.get("orphans") or {}).get("spaces") or [])] if isinstance(tb, dict) else []
+        ids = {x.get("id") for x in (fd.get("items") or [])} if isinstance(fd, dict) else set()
+        ok(s == 200 and s2 == 200 and w2 not in lost and not ids & {img["id"], img_rex["id"], proj.get("id"), board.get("id")},
+           f"détruire : le tableau de bord ne le montre plus, pas même hors des Teams ({lost} {sorted(ids)[:4]})")
+        meta = library.trashed_meta(img["id"])
+        ok(not auth.can_read_item(meta, auth.user("cal")) and not auth.can_read_item(meta, None)
+           and not auth.can_write_item(meta, auth.user("cal")) and not auth.can_trash_item(meta, auth.user("cal")),
+           "détruire : ce qu'il tenait n'est à personne, Cal et le socle compris")
+        s, d, _ = G("/api/library?limit=50", pia, here)
+        s_, me, _ = G("/api/auth/me", pia, here)
+        ok(s == 403 and me.get("workspace_refused") == w2, f"détruire : un onglet resté dessus est refusé, et se recale ({s})")
+        s, _, _ = G(f"/api/music/projects/{proj.get('id')}", pia, {"X-SR-Espace": w1})
+        s2, _, _ = G(f"/api/music/projects/{proj.get('id')}", adm, {"X-SR-Espace": w1})
+        s3, _, _ = G(f"/api/ideation/boards/{board.get('id')}", rex, {"X-SR-Espace": w1})
+        s4, _, _ = G(f"/api/ideation/boards/{board.get('id')}", adm, {"X-SR-Espace": w1})
+        ok(s == 404 and s2 == 404 and s3 in (403, 404) and s4 in (403, 404),
+           f"détruire : ses documents d'outil ne s'ouvrent plus, Cal compris ({s} {s2} {s3} {s4})")
+        s, tr, _ = G("/api/asset/trash?spaces=*")
+        ok(s == 200 and img["id"] not in {x["id"] for x in tr.get("items", [])},
+           "détruire : la corbeille d'Asset ne les montre pas (on ne les rend qu'en bloc, Admin → Stockage)")
+        try:
+            auth.set_current(None)
+            library.check_create(w2)
+            ok(False, "détruire : rien ne naît plus dans un Workspace détruit, pas même par le socle")
+        except PermissionError as e:
+            ok("détruit" in str(e), f"détruire : rien ne naît plus dans un Workspace détruit, pas même par le socle ({e})")
+        s, me, _ = G("/api/auth/me", rex)
+        ok((me.get("workspace") or {}).get("id") == "esp-perso-rex-detruit",
+           f"détruire : qui l'avait pour dernier retombe sur sa My Team ({(me.get('workspace') or {}).get('id')})")
+        for _ in range(250):
+            if job["state"] in ("cancelled", "error", "done"):
+                break
+            time.sleep(0.02)
+        ok(job["state"] == "cancelled", f"détruire : ses travaux en cours s'arrêtent ({job['state']})")
+        ok(any(e["event"] == "workspace détruit" and e.get("space") == w2 for e in auth.journal_tail(80)),
+           "détruire : le geste va au journal")
+
+        # la corbeille des Workspaces détruits (Cal) ; le rendre
+        s, d, _ = G("/api/admin/detruits", rex)
+        ok(s == 403, f"détruire : la corbeille des Workspaces détruits est à Cal ({s})")
+        s, d, _ = G("/api/admin/detruits")
+        row = next((x for x in d.get("spaces", []) if x["id"] == w2), {})
+        ok(s == 200 and row.get("name") == "Plateau" and row.get("objets") == 2 and row.get("objets_la") == 2
+           and row.get("documents", {}).get("musique") == 1 and row.get("documents", {}).get("ideation") == 1
+           and row.get("vers") in ("pia-detruit", "rex-detruit") and {a["id"] for a in row.get("auteurs", [])} == {"pia-detruit", "rex-detruit"},
+           f"détruire : Admin la liste — ce qu'il tenait, ses auteurs, où il reviendrait ({row})")
+        s, d, _ = P(f"/api/admin/detruits/{w2}/rendre", {"vers": "personne-inconnue"})
+        ok(s == 409 and espaces.gone(w2), f"détruire : on ne rend pas dans une My Team qui n'existe pas ({s} {err(d)})")
+        s, d, _ = P(f"/api/admin/detruits/{w2}/rendre", {"vers": "pia-detruit"})
+        ok(s == 200 and d.get("team") == "tea-perso-pia-detruit" and d.get("objets") == 2 and espaces.space(w2)
+           and espaces.space(w2)["team"] == "tea-perso-pia-detruit" and not espaces.gone(w2),
+           f"détruire : Cal le rend, le même, dans la My Team de son auteur ({s} {err(d) or d})")
+        here2 = {"X-SR-Espace": w2}
+        s, li, _ = G("/api/library?limit=50", pia, here2)
+        s5, fd, _ = G("/api/tableau/cherche?q=Detruit&toutes=1")
+        ok(s5 == 200 and proj.get("id") in {x.get("id") for x in (fd.get("items") or [])},
+           f"détruire : rendu, le tableau de bord le retrouve ({s5})")
+        s2, pj, _ = G(f"/api/music/projects/{proj.get('id')}", pia, here2)
+        s3, bd, _ = G(f"/api/ideation/boards/{board.get('id')}", adm, here2)
+        s4, fo, _ = G("/api/asset/view", pia, here2)
+        ok(s == 200 and {img["id"], img_rex["id"]} <= {x["id"] for x in li.get("items", [])} and s2 == 200 and s3 == 200,
+           f"détruire : tout le retrouve tel quel — objets, projet ODIO, planche ({s} {s2} {s3})")
+        ok(s4 == 200 and "Repérages" in str(fo.get("folders_by_space") or fo.get("folders") or ""),
+           f"détruire : … et son dossier déclaré (sa table par Workspace n'a pas bougé) ({s4})")
+        ok(not espaces.can_view(auth.user("rex-detruit"), w2), "détruire : ses rôles d'avant ne reviennent pas (une autre Team)")
+
+        # une Team : son propriétaire ou Cal ; jamais Nirvalab ; ses Workspaces, membres, liens, budget
+        img1 = up(pia, w1, "general")
+        P(f"/api/equipes/{tid}/budget", {"gpu_s": 3600})
+        s, inv, _ = P(f"/api/equipes/{tid}/invitations", {"role": "member", "hours": 24}, tok=pia)
+        P(f"/api/equipes/{tid}/membres", {"pseudo": "Ida Attente", "role": "member"}, tok=pia)   # un pseudo neuf : il attend Cal (D5)
+        ok((auth.user("ida-attente") or {}).get("state") == "pending", "détruire : un invité de Pia attend la validation de Cal")
+        s, d, _ = P(f"/api/equipes/{tid}/detruire", {"nom": "Plateau Detruit"}, tok=rex)
+        ok(s == 403 and "propriétaire" in err(d), f"détruire : un membre ne détruit pas la Team ({s} {err(d)})")
+        s, d, _ = P(f"/api/equipes/{espaces.NIRVALAB}/detruire", {"nom": "Nirvalab"})
+        ok(s == 409 and "instance" in err(d), f"détruire : Nirvalab, jamais ({s} {err(d)})")
+        s, d, _ = P(f"/api/equipes/{tid}/detruire", {"nom": "Plateau"}, tok=pia)
+        ok(s == 400 and espaces.team(tid), f"détruire : la Team, son nom tapé ({s} {err(d)})")
+        s, d, _ = P(f"/api/equipes/{tid}/detruire", {"nom": "Plateau Detruit"}, tok=pia)
+        ok(s == 200 and espaces.team(tid) is None and espaces.gone(w1) and d["destroyed"]["members"] == ["ida-attente", "rex-detruit"]
+           and d["destroyed"]["invites"] >= 1, f"détruire : le propriétaire détruit la Team ({s} {err(d) or d.get('destroyed')})")
+        ok(d["destroyed"].get("waiting") == ["ida-attente"] and auth.user("ida-attente") is None and not espaces.invitations_of("ida-attente"),
+           f"détruire : l'invité qui n'attendait que cette Team est refusé avec elle ({d['destroyed'].get('waiting')})")
+        ok(espaces.team_role(auth.user("rex-detruit"), tid) is None and library.see(img1["id"]) is None
+           and (library.trash_root() / img1["id"]).is_dir(), "détruire : ses membres sortis, ses objets à la corbeille")
+        s, d, _ = H("GET", f"/api/auth/equipe/{inv.get('token')}")
+        ok(s in (404, 410), f"détruire : ses liens d'invitation ne s'ouvrent plus ({s})")
+        with espaces._lock:
+            rec = dict(espaces._data()["destroyed_teams"].get(tid) or {})
+        ok(rec.get("name") == "Plateau Detruit" and "budget" not in rec and espaces.budget_of(tid)["gpu_s"] is None,
+           "détruire : son budget effacé, sa fiche gardée")
+        s, d, _ = G("/api/equipes?toutes=1")
+        ok(tid not in {x["id"] for x in d.get("teams", [])}, "détruire : Cal ne la voit plus parmi les Teams")
+        # un auteur qui n'existe plus : le Workspace revient chez Cal
+        s, ts, _ = P("/api/equipes", {"name": "Sid Detruit"}, tok=sidt)
+        ws2 = P(f"/api/equipes/{ts['id']}/espaces", {"name": "Rushes"}, tok=sidt)[1]["id"]
+        up(sidt, ws2, "rush")
+        P(f"/api/espaces/{ws2}/detruire", {"nom": "Rushes"})
+        P("/api/admin/users/sid-detruit/supprimer")
+        s, d, _ = G("/api/admin/detruits")
+        row = next((x for x in d.get("spaces", []) if x["id"] == ws2), {})
+        s2, r, _ = P(f"/api/admin/detruits/{ws2}/rendre")
+        ok(row.get("vers") == "cal" and s2 == 200 and r.get("team") == "tea-perso-cal" and r.get("objets") == 1,
+           f"détruire : son auteur n'existe plus — rendu dans la My Team de Cal ({row.get('vers')} {s2} {err(r) or r.get('team')})")
+    finally:
+        gate.set()
+        if job["state"] in ("queued", "running"):
+            jobs.cancel(job["id"])
+        jobs.HANDLERS.pop("detruire.essai", None)
+        jobs._META.pop("detruire.essai", None)
+
+
+def _menage(ok, H, same) -> None:
+    """D7, le grand ménage : l'aperçu exact (calculé à part ici, sur les mêmes données), ce que la page
+    coche d'avance, les refus (la confirmation, Cal, un admin, un compte qui n'est pas d'atelier, une
+    Team qui ne se détruit pas : rien n'est fait), l'application (comptes, Teams, appartenances, noms),
+    Cal et les admins épargnés, ce que chacun a fait dans sa My Team intact. Les données du contrôle
+    sont communes à tous les selftests : auth.json et teams.json sont remis comme avant à la fin (les
+    objets enterrés, eux, restent à la corbeille, dans un Workspace que teams.json connaît de nouveau)."""
+    from core import config, library
+    err = lambda d: d.get("error", "") if isinstance(d, dict) else str(d)[:80]   # noqa: E731
+    _, _, adm = H("POST", "/api/auth/enter", {"name": "nico007"}, headers=same)
+    P = lambda path, body=None, tok=adm, hd=None: H("POST", path, body if body is not None else {}, cookie=tok,   # noqa: E731
+                                                     headers={**same, **(hd or {})})
+    G = lambda path, tok=adm, hd=None: H("GET", path, cookie=tok, headers=hd or {})   # noqa: E731
+    up = lambda tok, sid, name: H("PUT", f"/api/library/upload?name={name}.png&title={name}", raw=_png(), cookie=tok,   # noqa: E731
+                                  headers={**same, "X-SR-Espace": sid})[1]
+    # l'atelier : deux Teams de Cal ; trois comptes créés par elles (via « equipe »), une amie, un admin
+    s, ta, _ = P("/api/equipes", {"name": "Atelier Menage"})
+    s, tm, _ = P("/api/equipes", {"name": "Mixte Menage"})
+    for tid, who in ((ta["id"], "Etu Un"), (ta["id"], "Etu Deux"), (tm["id"], "Etu Trois")):
+        P(f"/api/equipes/{tid}/membres", {"pseudo": who, "role": "member"})
+    P("/api/admin/users", {"name": "Kim Menage", "access": "studio"})
+    P("/api/admin/users", {"name": "Adm Menage", "access": "studio"})
+    P("/api/admin/users/adm-menage", {"role": "admin"})
+    for who in ("Kim Menage", "Adm Menage"):
+        P(f"/api/equipes/{tm['id']}/membres", {"pseudo": who, "role": "member"})
+    toks = {}
+    for who in ("Etu Un", "Etu Deux", "Kim Menage"):
+        _, _, toks[who] = H("POST", "/api/auth/enter", {"name": who}, headers=same)
+        H("GET", "/api/auth/me", cookie=toks[who])
+    perso_etu = up(toks["Etu Un"], "esp-perso-etu-un", "chez-etu")         # ce qu'il a fait chez lui : reste
+    perso_kim = up(toks["Kim Menage"], "esp-perso-kim-menage", "chez-kim")
+    # un invité qui attend Cal (D5) : Kim (Studio) met un pseudo neuf dans sa My Team (D2) — il attend la validation
+    P("/api/equipes/tea-perso-kim-menage/membres", {"pseudo": "Inv Menage", "role": "member"}, tok=toks["Kim Menage"])
+    atelier = up(toks["Etu Deux"], ta["spaces"][0]["id"], "atelier")       # dans la Team de l'atelier : à la corbeille
+    with espaces._lock:   # la My Team de Kim, comme avant le 09/10
+        espaces._data()["teams"]["tea-perso-kim-menage"]["name"] = espaces.PERSONAL_OLD
+        espaces._save()
+
+    # l'aperçu — calculé ici à part, sur les mêmes données
+    s, d, _ = G("/api/admin/menage", toks["Kim Menage"])
+    ok(s == 403, f"ménage : à Cal seulement ({s})")
+    s, pv, _ = G("/api/admin/menage")
+    with auth._lock:
+        users = {k: dict(v) for k, v in auth._data()["users"].items()}
+    made = lambda x: bool(x.get("invited")) if x.get("state") == "pending" else x.get("via") == "equipe"   # noqa: E731
+    want = {k for k, x in users.items() if made(x) and x.get("role") != "admin" and k != auth.admin_id()}
+    got = {c["id"] for c in pv.get("comptes", [])}
+    ok(s == 200 and got == want and {"etu-un", "etu-deux", "etu-trois"} <= got and "kim-menage" not in got,
+       f"ménage : (a) les comptes créés par une Team, exactement ({len(got)} / {len(want)})")
+    eu = next((c for c in pv.get("comptes", []) if c["id"] == "etu-un"), {})
+    ok(eu.get("by") == "cal" and [x["name"] for x in eu.get("teams", [])] == ["Atelier Menage"] and eu.get("items") == 1 and eu.get("created"),
+       f"ménage : … avec leur date, qui les a créés, leurs Teams, ce qu'ils ont chez eux ({eu})")
+    rows = {t["id"]: t for t in pv.get("teams", [])}
+    with espaces._lock:
+        shared = {k for k, t in espaces._data()["teams"].items() if not t.get("personal")}
+    ok(set(rows) == shared, f"ménage : (b) toutes les Teams partagées, aucune personnelle ({len(rows)} / {len(shared)})")
+    ra, rm = rows.get(ta["id"], {}), rows.get(tm["id"], {})
+    ok(ra.get("suggest") is True and rm.get("suggest") is False and ra.get("objets") == 1 and ra.get("owner") == "cal"
+       and sorted(m["id"] for m in ra.get("members", [])) == ["etu-deux", "etu-un"] and [s_["name"] for s_ in ra.get("spaces", [])] == ["Général"],
+       f"ménage : … propriétaire, membres, Workspaces, contenu ; l'atelier coché d'avance, la Team mixte non ({ra.get('suggest')} {rm.get('suggest')})")
+    nv = rows.get(espaces.NIRVALAB, {})
+    ok(nv.get("destroy") is False and nv.get("suggest") is False and "instance" in (nv.get("destroy_why") or ""),
+       f"ménage : Nirvalab ne se détruit pas, et le dit ({nv.get('destroy_why')})")
+    with espaces._lock:
+        db = espaces._data()
+        strip = {(t["id"], m) for t in db["teams"].values() for m, x in t["members"].items()
+                 if m != t.get("owner") and x.get("role") != "owner" and m != auth.admin_id() and (users.get(m) or {}).get("role") != "admin"}
+    ok({(x["team"], x["id"]) for x in pv.get("membres", [])} == strip and (tm["id"], "adm-menage") not in strip
+       and "Adm Menage" in pv.get("epargnes", []), f"ménage : (c) les appartenances à retirer, exactement, les admins épargnés ({len(strip)})")
+    ok("tea-perso-kim-menage" in {x["id"] for x in pv.get("renommer", [])}, "ménage : (d) les Teams personnelles à renommer")
+    iv = next((c for c in pv.get("comptes", []) if c["id"] == "inv-menage"), {})
+    ok((auth.user("inv-menage") or {}).get("state") == "pending" and iv.get("pending") is True and iv.get("by") == "kim-menage"
+       and [x["id"] for x in iv.get("teams", [])] == ["tea-perso-kim-menage"],
+       f"ménage : un compte en attente créé par une Team en est aussi, qui l'a invité, où ({iv})")
+
+    # les refus : rien n'est fait
+    base = {"comptes": ["etu-un", "etu-deux", "etu-trois", "inv-menage"], "teams": [ta["id"]], "retirer_membres": True, "renommer": True}
+    for body, what in (({**base}, "sans confirmation"), ({**base, "confirme": "menage"}, "mal confirmé"),
+                       ({**base, "comptes": ["cal"], "confirme": "MENAGE"}, "Cal"),
+                       ({**base, "comptes": ["adm-menage"], "confirme": "MENAGE"}, "un admin"),
+                       ({**base, "comptes": ["kim-menage"], "confirme": "MENAGE"}, "un compte qui n'est pas d'atelier"),
+                       ({**base, "teams": [espaces.NIRVALAB], "confirme": "MENAGE"}, "Nirvalab"),
+                       ({**base, "teams": ["tea-perso-kim-menage"], "confirme": "MENAGE"}, "une My Team")):
+        s, d, _ = P("/api/admin/menage", body)
+        ok(s == 400 and auth.user("etu-un") and espaces.team(ta["id"]), f"ménage : refusé — {what} ; rien n'est fait ({s} {err(d)[:70]})")
+
+    # l'application (les données communes sont remises comme avant ensuite)
+    root = config.data_dir()
+    snap = {n: (root / n).read_bytes() for n in ("auth.json", "teams.json")}
+    try:
+        s, rep, _ = P("/api/admin/menage", {**base, "confirme": "MENAGE"})
+        ok(s == 200 and sorted(x["id"] for x in rep.get("comptes", [])) == ["etu-deux", "etu-trois", "etu-un", "inv-menage"]
+           and next(x for x in rep["comptes"] if x["id"] == "inv-menage").get("attente")
+           and [x["id"] for x in rep.get("teams", [])] == [ta["id"]] and not rep.get("erreurs"),
+           f"ménage : appliqué — trois comptes supprimés, un invité en attente refusé, une Team détruite ({s} {err(rep) or rep.get('erreurs')})")
+        ok(all(auth.user(x) is None for x in ("etu-un", "etu-deux", "etu-trois", "inv-menage")) and espaces.team(ta["id"]) is None
+           and espaces.gone(ta["spaces"][0]["id"]) and (library.trash_root() / atelier["id"]).is_dir(),
+           "ménage : les comptes ne sont plus ; la Team de l'atelier détruite, son contenu à la corbeille")
+        with espaces._lock:
+            left = [(t["id"], m) for t in espaces._data()["teams"].values() for m, x in t["members"].items()
+                    if m != t.get("owner") and m != auth.admin_id() and not auth.is_admin(auth.user(m))]
+        removed = {(x["team"], x["id"]) for x in rep.get("membres", [])}
+        expect = {(t, m) for t, m in strip if t != ta["id"] and m not in ("etu-un", "etu-deux", "etu-trois", "inv-menage")}
+        ok(not left and removed == expect, f"ménage : chaque Team ne garde que son propriétaire (et les admins) ({len(left)} restés, "
+                                           f"{len(removed)} retirés / {len(expect)} attendus)")
+        ok(espaces.team_role(auth.user("adm-menage"), tm["id"]) == "member" and auth.user("cal") and auth.user("adm-menage"),
+           "ménage : Cal et les admins épargnés")
+        ok(espaces.team("tea-perso-kim-menage")["name"] == "My Team" and "tea-perso-kim-menage" in {x["id"] for x in rep.get("renommees", [])},
+           "ménage : les « Chez moi » renommées « My Team »")
+        library._load()
+        a, b = library._items.get(perso_etu["id"]), library._items.get(perso_kim["id"])
+        ok(a and a.get("space") == "esp-perso-etu-un" and b and b.get("space") == "esp-perso-kim-menage"
+           and espaces.space("esp-perso-etu-un") and espaces.space("esp-perso-kim-menage"),
+           "ménage : ce que chacun a fait dans sa My Team reste, où il était")
+        ok(any(e["event"] == "ménage" for e in auth.journal_tail(60)), "ménage : le rapport va au journal")
+    finally:
+        for n, b in snap.items():
+            (root / n).write_bytes(b)
+        with auth._lock:
+            auth._db = None
+        espaces.reset_for_tests()
+        espaces.rename_personal()   # la My Team de Kim, « Chez moi » pour l'essai : comme toutes
+
+
 def _migration(ok, tempfile, shutil, json, hashlib, Path) -> None:
     """La migration sur une copie jetable : ce qu'elle fait, deux passes = même résultat,
     rien de perdu, chaque objet et document dans Général."""
@@ -1185,7 +1836,7 @@ def _migration(ok, tempfile, shutil, json, hashlib, Path) -> None:
         ok({k: v["role"] for k, v in nv["members"].items()} == {"cal": "owner", "nico": "member", "su": "member"},
            f"migration : les amis Studio membres (éditeurs de Général), pas le compte Apps ni l'invité ({nv['members']})")
         ok(sorted(rep["personal_created"]) == ["apo", "cal", "nico", "su"] and "tea-perso-gst" not in db["teams"],
-           f"migration : une Team « Chez moi » par compte, pas pour l'invité de planche ({rep['personal_created']})")
+           f"migration : une Team personnelle par compte, pas pour l'invité de planche ({rep['personal_created']})")
         ok(loads("auth.json")["users"] == users, "migration : auth.json intact (l'access: studio reste)")
         after = snapshot()
         lost = [rel for rel in first if rel not in after]

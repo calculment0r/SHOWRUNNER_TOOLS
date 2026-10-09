@@ -364,10 +364,18 @@ def isolation_checks() -> None:
     from tools.admin import essai_http as H
 
     root = config.data_dir()
-    known = set(espaces._data().get("spaces") or {})
+    # un Workspace détruit (D4) reste connu : sa fiche est dans la corbeille des Workspaces détruits, et ce
+    # qu'il tenait n'est à personne (core/espaces.py, gone) jusqu'à ce que Cal le rende
+    known = set(espaces._data().get("spaces") or {}) | set(espaces._data().get("destroyed_spaces") or {})
     # 1. l'inventaire
     unknown = [p.name for p in sorted(root.iterdir()) if not any(fnmatch.fnmatch(p.name, k) for k in STORES)]
     ok(not unknown, f"isolement : chaque entrée de <data_dir> est déclarée dans STORES (tools/check.py) — inconnues : {unknown}")
+    # ce que tient un Workspace (l'aperçu du ménage, la fiche d'un Workspace détruit : espaces.content_of)
+    # compte chaque magasin « champ », ou dit pourquoi pas : un magasin neuf non compté échoue
+    loose = [k for k, (how, _w, _d) in STORES.items() if how == "champ"
+             and k not in espaces.CONTENT_STORES and k not in espaces.CONTENT_SKIP]
+    ok(not loose, f"isolement : chaque magasin « champ » est compté par espaces.content_of (CONTENT_DOCS) ou dit pourquoi "
+                  f"pas (CONTENT_SKIP) — oubliés : {loose}")
     for name, (how, what, docs) in STORES.items():
         if how != "champ" or docs is None:
             continue
@@ -400,7 +408,7 @@ def isolation_checks() -> None:
         s, d, _ = H("POST", f"/api/equipes/{t['id']}/membres", {"pseudo": "Ivo Isole", "role": "member"}, cookie=cal, headers=same)
         _, _, tok = H("POST", "/api/auth/enter", {"name": "Ivo Isole"}, headers=same)
         ivo = auth.find_pseudo("Ivo Isole")
-        known = set(espaces._data().get("spaces") or {})
+        known = set(espaces._data().get("spaces") or {}) | set(espaces._data().get("destroyed_spaces") or {})
         sees = {x for x in known if espaces.can_view(ivo, x)} if ivo else set()
         ok(s == 200 and tok and ivo and sees - {espaces.personal_space_id(ivo["id"])} == {mine},
            f"isolement : Ivo entre, membre de la seule Team « Isolement » ({s} {sees})")

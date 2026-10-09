@@ -1046,6 +1046,143 @@ s'ouvrent dans leur outil, dans leur Workspace.
 
 ---
 
+## Fait le 09/10 — Teams v2 : My Team, détruire, le grand ménage (branche `wip3/teams-v2`)
+
+Décisions de Cal du 09/10, qui priment sur ce qui précède : « tous les gens qui se loguent
+n'ont que leur espace vierge » ; un compte qui a le Studio crée sa Team et y invite, plusieurs
+Workspaces par Team, « les gens dans la même team voient tous les workspaces de la team » ; on
+détruit les Teams et les Workspaces ; « on va cleaner tout ce que voient les comptes et faire un
+fresh start, tu laisses quand même ce que les gens ont fait dans leur espace » ; « on ne
+travaille pas en dehors d'une team, donc par défaut on a une team qui s'appelle My Team ».
+
+**D1 · My Team.** La Team personnelle naît « My Team », son Workspace « Général »
+(`espaces.PERSONAL_NAME`, `PERSONAL_SPACE`) ; une d'avant garde son Workspace « Perso ». Son
+propriétaire la renomme (Cal aussi ; un admin qu'il y a mis, non) ; `renamed` retient qu'un nom
+est choisi. Les « Chez moi » d'avant deviennent « My Team » **par le ménage** (D7,
+`rename_personal`), pas au chargement : l'aperçu les nomme (d), le geste est journalisé, Cal le
+décide ; un renommage au chargement aurait changé des noms au premier redémarrage de DGX2 sans
+trace. Idempotent (une seconde passe ne trouve rien) ; jamais un nom choisi — avant le 09/10 une
+Team personnelle ne se renommait pas, donc un « Chez moi » sans `renamed` est le nom de naissance
+(un « Chez moi » remis par choix porte `renamed` : épargné). À l'écran (grep de « Chez moi » et
+de « Perso » dans les pages) : l'en-tête, Admin (Teams, Personnes : « sans my team »), Asset
+(l'arbre et « Autres workspaces » prennent `team_name`), la pastille GPU de l'accueil, Idéation
+« Commencer un projet » (les Teams des personnes, `people_for`). Le nom d'une Team pour la
+personne : `label` (`label_of`) — la My Team d'un autre dit à qui elle est (« My Team · Noé »).
+
+**Un compte neuf n'a que sa My Team.** `auth._join_instance_team` (un ami accepté, ajouté
+d'avance, fait ami ou à qui Cal ouvre le Studio devenait membre de Nirvalab, éditeur de Général :
+la règle 2 de la migration, tenue depuis le 30/09) est retiré — sinon chaque ami neuf aurait
+refait ce que le ménage défait. Cal met quelqu'un dans Nirvalab comme dans toute Team. Les
+selftests qui partaient de là (`droits`, `compte`, `documents`, `elements`, `image_atelier`,
+`ideation_collab`, `porte_publique`, `equipes`) le mettent maintenant à la main.
+
+**D2 · My Team invite si son propriétaire a le Studio.** `_may_invite`, `judge`
+(`invite_space`) et `_team_public` (`invite`, `invite_why`) : une Team personnelle Apps n'invite
+personne, Cal compris (le Studio est au compte) ; à son propriétaire la phrase mène à
+« Demander le Studio » (le bouton est sur la carte, `POST /api/auth/studio`) ; une Team
+personnelle Studio invite comme une autre (membres, guests, liens). Un compte Studio crée
+d'autres Teams (`create_team_why`, vérifié), un compte Apps non. My Team ne se détruit, ne
+s'archive ni ne se quitte (son propriétaire : 409). `people_for` compte ses membres.
+
+**D3 · Un membre voit tous les Workspaces de sa Team.** Un Workspace neuf : éditeur par
+défaut ; `none` (« sur invitation ») n'est plus accepté — ni rôle par défaut, ni rôle d'un
+membre (400 qui dit pourquoi : « pour n'y mettre que certains, fais-en des guests ») ; un `none`
+d'avant vaut lecteur (`_profile`, et `default_role` le dit). Un guest reste aux Workspaces où on
+le met. Le menu de l'en-tête : les Teams partagées, sa My Team, puis celles des autres (avec le
+rôle qu'on y a).
+
+**D4 · Détruire.** `POST /api/espaces/<e>/detruire {nom}` — qui gère sa Team (propriétaire,
+admin) ou Cal ; jamais Général (`default` ou `esp-general`), jamais le dernier Workspace ouvert
+d'une Team (la phrase dit quoi faire). `POST /api/equipes/<t>/detruire {nom}` — son propriétaire
+ou Cal ; jamais une My Team, jamais Nirvalab (ni la Team qui porte le Workspace par défaut).
+Le nom tapé confirme (aux espaces près) ; la page (`confirmBox` d'admin.js, `typed`) garde le
+bouton grisé tant qu'il ne l'est pas. Journalisé (`workspace détruit`, `team détruite`).
+Le modèle, juste par construction : rien n'est réécrit. La fiche du Workspace passe de `spaces`
+à `destroyed_spaces` ; tout ce qui porte son identifiant n'a plus de profil (`_profile`), et
+`espaces.gone` ferme aussi les juges d'`auth` à Cal et au socle (`can_read_item`,
+`can_write_item`, `can_trash_item`), `library.check_create` (rien n'y naît, pas même un travail),
+le lien d'une planche (`ideation_collab.role_of`). Puis : les objets de la bibliothèque à la
+corbeille (`library.bury`), les travaux en file ou en cours arrêtés, qui l'avait pour dernier
+retombe sur sa My Team (un onglet resté dessus reçoit `workspace_refused`), les liens
+d'invitation l'oublient (un lien de guest sans Workspace est retiré), sa part de budget s'efface,
+les onglets ouverts sur ses planches sont congédiés (`QUAND_DETRUIT`). Une Team : chacun de ses
+Workspaces ainsi, ses membres sortis, ses liens retirés, son budget effacé ; sa fiche reste dans
+`destroyed_teams`. Ses invités qui attendaient Cal (section suivante, D5) et ne sont invités nulle part
+ailleurs sont refusés avec elle (`_drop_waiting` → `auth.refuse` : le compte, ses sessions) ; l'alerte
+Telegram qui les nommait dit « sa Team … a été détruite » et perd ses boutons (`alertes.clore`).
+Le tableau de bord (`server/tools/tableau.py`) n'en montre rien, pas même « hors des Teams » : ses
+objets sont à la corbeille, que l'inventaire ne liste pas, et ses documents d'outil ne sont plus à
+personne (`auth.item_reader` → `gone`) ; rendu, tout y revient dans sa nouvelle My Team. « Hors des
+Teams » reste ce qu'il était : un identifiant que `teams.json` ne connaît pas du tout.
+
+L'inventaire, magasin par magasin (`STORES` de `tools/check.py` ; ce que compte
+`espaces.content_of`, `CONTENT_DOCS` — un magasin « champ » neuf qui n'y est pas fait échouer
+`check.py isolement`) :
+
+| magasin | ce qu'il devient |
+|---|---|
+| `library` (objets, éléments, séquences, playlists, documents…) | à la corbeille (`trash/`), chacun garde son `space` : Admin → Stockage les compte, la corbeille d'Asset ne les montre à personne ; « Vider la corbeille » les efface pour de bon |
+| `trash` (déjà jetés) | restent, à personne |
+| `musique`, `ideation`, `transcrire`, `luts`, `image_atelier`, `paroles`, `analyse` (projets.json) | restent en place, à personne (leur `space` ne mène nulle part) ; reviennent avec le Workspace |
+| `montage` (`projet/<Workspace>.json`), `chanson` (`spaces.json`), `asset_folders.json` | une table par Workspace, inchangée : revient avec lui |
+| `analyses`, `ecoute`, `lora`, `ideation_collab`, `ideation_agent` | suivent leur parent |
+| **ne passent pas à la corbeille** : `elements` (le journal des éléments : ses lignes gardent leur Workspace), `jobs.json` (les travaux finis : masqués, `job_out`), `conso.jsonl` et `journal.jsonl` (l'histoire) | des journaux : ils ne se rendent pas, ne se montrent plus à personne |
+
+Rendre (Cal, Admin → Stockage, « Workspaces détruits » ; `GET /api/admin/detruits`,
+`POST /api/admin/detruits/<e>/rendre {vers?}`) : le MÊME identifiant revient, dans la My Team de
+son auteur principal (le plus d'objets et de documents ; à égalité, qui l'a créé) s'il existe
+encore, sinon dans celle de Cal — ou de qui Cal choisit parmi ses auteurs. Ses objets sortent de
+la corbeille (ceux qu'elle tient encore : un vidage est dit, « perdus »), ses documents le
+retrouvent tels quels ; ses rôles par membre ne reviennent pas (ils étaient d'une autre Team).
+Un seul geste rend tout le Workspace : ses documents d'outil se tiennent entre eux (une séquence
+et ses plans, une planche et ses images) ; les rendre un à un dans des My Team différentes
+casserait ces liens.
+
+**D7 · Le grand ménage** (« fresh start » ; Admin → Teams, une carte en tête, pour Cal — un
+admin du portail, comme toute la page Admin). `GET /api/admin/menage` : (a) les comptes créés
+par une Team (`via: "equipe"` : ajoutés par pseudo ou entrés par un lien ; et ceux qui attendent
+encore la validation de Cal, `invited` — « attend Cal », refusés par le chemin de Refuser,
+`auth.refuse`), leur date, qui les a faits, leurs Teams, ce qu'ils ont chez eux ; (b) les Teams partagées : propriétaire, membres,
+Workspaces, objets, octets, documents, si elles se détruisent (sinon pourquoi) ; (c) les
+appartenances à retirer (toute personne autre que le propriétaire, sauf un admin du portail :
+« épargnés ») ; (d) les Teams personnelles encore « Chez moi ». Coché d'avance : les comptes (a),
+les Teams dont tous les membres hors propriétaire sont parmi eux (une Team où le propriétaire est
+seul : seulement s'il est lui-même un compte d'atelier), les deux cases. `POST {comptes, teams,
+retirer_membres, renommer, confirme: "MENAGE"}` : tout est jugé avant le premier geste (un compte
+qui n'est pas d'atelier, Cal, un admin, une Team qui ne se détruit pas : 400, rien n'est fait),
+puis les Teams détruites (D4), les comptes supprimés (`admin.supprimer_compte`, le chemin d'Admin
+→ Personnes), les membres retirés, les noms ; le rapport (et ce qui a échoué en route), au
+journal. Le bouton d'application est l'orange de l'écran, il dit ce qu'il va faire, la fenêtre
+le redit et attend MENAGE tapé. Le contenu de la My Team de chacun reste ; celle d'un compte
+supprimé est archivée (`forget_user`, inchangé), son contenu reste sur le disque. La page dit
+aussi qu'un guest gardé et retiré de tout n'entre plus nulle part (il n'a pas de My Team).
+
+**Preuves** : `tools/check.py` complet (voir le compte rendu de la branche) ; selftests neufs
+dans `server/tools/equipes.py` (`_my_team`, `_detruire`, `_menage`, et D3 dans `_http`) ; le
+pilote `admin/pilote_teams.mjs` (portail d'essai à la porte allumée, `SR_PORTE=1` de
+`tools/portail_essai.py`) : la carte du ménage cochée d'avance, sombre et clair ; détruire
+« Rushes » (le bouton grisé tant que le nom n'est pas tapé), Stockage, « Rendre » ; le menu de
+l'en-tête d'un compte Apps membre de la My Team d'un autre, sa carte et « Demander le Studio »,
+sombre et clair ; la My Team d'un compte Studio qui invite ; le ménage appliqué par la page.
+
+**Reste, pas vérifié** :
+- pas de « Détruire » dans le menu de l'en-tête : la confirmation par le nom tapé vit dans
+  Admin, à un clic (« Réglages de la Team ») ;
+- les vraies données de DGX2 ne sont pas vues d'ici : l'aperçu du ménage les montrera à Cal
+  avant tout geste ;
+- un compte membre de la My Team d'un autre atterrit dans celle-ci quand il n'a pas de
+  « dernier » (`default_for` préfère une Team qui n'est pas la sienne, comme avant pour les
+  Teams partagées) ;
+- la My Team d'un compte supprimé est archivée : ceux qu'il y avait mis (D2) n'y font plus que
+  lire ;
+- une Team détruite garde ses lignes dans `conso.jsonl` (l'histoire du budget) ;
+- détruire un seul Workspace ne refuse pas un guest en attente qui n'avait que lui : sa place de
+  guest dans la Team reste (validé, il n'entre nulle part tant qu'on ne le met pas ailleurs) ;
+- un invité en attente aussi invité dans une autre Team (une demande de la porte passée par un lien)
+  reste en attente ; son alerte nomme encore la Team détruite.
+
+---
+
 ## Fait le 09/10 — Cal valide les invités, et il en est alerté (Telegram)
 
 Cal, 09/10 : « si le user invite quelqu'un je voudrais recevoir une alerte pour pouvoir valider
@@ -1075,7 +1212,7 @@ pseudo neuf n'est plus « accepté par le lien » quand le lien (ou le geste) n'
   d'emblée.
 - **Admin → Demandes** montre l'invité à côté des demandes de la porte : « invité par X dans la
   Team Y (rôle) » (`espaces.invitations_of`). **Accepter** (`auth.accept_request`) active le compte,
-  donc ses places — sans le Studio du compte (la Team l'a) et sans « Chez moi » s'il n'est que guest
+  donc ses places — sans le Studio du compte (la Team l'a) et sans My Team s'il n'est que guest
   partout, comme l'aurait fait le lien de Cal. **Refuser** (`auth.refuse`) retire d'abord ses places
   (`espaces.drop_memberships` : un pseudo recréé plus tard n'en hérite jamais), puis le compte.
 - **Bornes, décidées ici** : un invité qui attend, remis dans une Team (la même ou une autre) : 409,

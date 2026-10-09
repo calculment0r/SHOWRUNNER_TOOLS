@@ -104,12 +104,9 @@ class _View:
 
     def team_name(self, t: dict) -> str:
         """Le nom d'une Team pour cette personne : la Team personnelle d'un autre dit à qui elle
-        est (« <son nom> · <le nom de la personne> » : Cal les voit toutes, toutes nées du même
-        nom) — la règle du nom de la Team dans l'en-tête des Teams v2 (09/10)."""
-        name = t.get("name") or t.get("id") or ""
-        if t.get("personal") and t.get("owner") != self.uid:
-            return f"{name} · {self.person(t.get('owner'))['name']}"
-        return name
+        est (« <son nom> · <le nom de la personne> » : Cal les voit toutes, toutes nées « My
+        Team ») — la règle de l'en-tête, une seule écriture : espaces.label_of."""
+        return espaces.label_of({**t, "name": t.get("name") or t.get("id") or ""}, self.uid) if t else ""
 
     def of(self, sid: str) -> dict:
         sp = self.spaces.get(sid)
