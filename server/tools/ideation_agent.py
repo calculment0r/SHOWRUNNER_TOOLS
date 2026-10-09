@@ -701,7 +701,7 @@ def skill_corps(sid: str, **subs) -> str:
     """La consigne d'une skill (agent/skills/<sid>/SKILL.md, sa partie « # Instructions »), ses {champs} remplis par le code."""
     sk = reg_.skill(sid)
     if not sk:
-        raise RuntimeError(f"la skill « {sid} » ne se lit pas (agent/skills/{sid}/) : {'; '.join(reg_.registre()['erreurs'][:3])}")
+        raise RuntimeError(f"la skill « {sid} » ne se lit pas (agent/skills/{sid}/) : {'; '.join(reg_.donnees()['erreurs'][:3])}")
     txt = sk["corps"]
     for k, v in subs.items():
         txt = txt.replace("{" + k + "}", str(v))
@@ -2261,7 +2261,7 @@ def skill_entree(d: dict, conv: dict, turn: dict, content: str) -> None:
     don = d.get("donnees") if isinstance(d.get("donnees"), dict) else {}
     sk = reg_.skill(sid)
     if not sk:
-        raise HttpError(400, f"skill : une skill du registre ({', '.join(reg_.registre()['skills'])})")
+        raise HttpError(400, f"skill : une skill du registre ({', '.join(reg_.donnees()['skills'])})")
     if et == "entrees":
         qt = _turn(conv, str(don.get("questions_turn") or ""))
         if not qt or not qt.get("questions") or not qt.get("suite"):
@@ -2523,7 +2523,7 @@ def storyboard_mark(req, conv: dict, t: dict, d: dict, bid: str) -> None:
         dc.update(titre=new["titre"], plans=new["plans"], remarques=new["remarques"],
                   total_s=round(sum(float(p["duree_s"]) for p in new["plans"]), 1), corrige=library.now())
         return
-    reg = reg_.registre()
+    reg = reg_.donnees()   # la règle 8 ne lit pas l'état des capacités : la route n'attend aucune machine
     etape = "planche" if d.get("valide") else "images"
     if etape == "planche" and dc.get("etat") != "propose":
         raise HttpError(409, "ce découpage est déjà validé (ou remplacé)")

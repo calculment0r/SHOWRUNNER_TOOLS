@@ -56,7 +56,8 @@ SKILL_LINES = 500      # « Keep your main SKILL.md under 500 lines » (la spéc
 CORPS = "# Instructions"   # dans SKILL.md : ce qui suit cette ligne est la consigne du modèle
 
 _app = None
-_cache: dict = {"t": 0.0, "v": None}
+_cache: dict = {"t": 0.0, "v": None}     # le registre, chaque capacité avec son état (lu dans les machines)
+_lu: dict = {"t": 0.0, "v": None}        # les données seules (agent/) : ce qu'une route lit sans attendre une machine
 _comfy: dict = {}       # instance → (t, {nœud: info}, {dossier: [fichiers]}, version)
 _lock = threading.Lock()
 
@@ -339,9 +340,21 @@ def fiche_errs(c, intentions: set, faits: tuple) -> list[str]:
     return out
 
 
+def donnees(max_age: float = MAX_AGE) -> dict:
+    """Le registre lu dans `agent/`, SANS l'état des capacités (gardé 30 s) : une route (un tour, une validation) le lit
+    sans attendre qu'une ComfyUI réponde ; l'état, lui, se calcule dans le travail ou pour `GET /api/agent/registre`."""
+    with _lock:
+        if _lu["v"] and time.time() - _lu["t"] < max_age:
+            return _lu["v"]
+    reg = charger()
+    with _lock:
+        _lu.update(t=time.time(), v=reg)
+    return reg
+
+
 def skill(sid: str) -> dict | None:
-    """Une skill chargée (sa consigne, son contrat, son schéma) — lue dans le registre gardé."""
-    return registre()["skills"].get(sid)
+    """Une skill chargée (sa consigne, son contrat, son schéma)."""
+    return donnees()["skills"].get(sid)
 
 
 # ── l'état, calculé ──────────────────────────────────────────
