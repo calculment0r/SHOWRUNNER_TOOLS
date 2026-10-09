@@ -227,10 +227,15 @@ def selftest(call, ok) -> None:
     hors = [f"{t}.{k}" for t, r in T.items() for k, s, f, d in r if not f and not d]
     ok(captes >= 240 and all(R["sortes"].get(s) is None for t, r in T.items() for k, s, f, d in r if not f and not d),
        f"attracteurs, la table : {captes} réglages captés sur {n} ; chaque réglage continu hors attracteurs l'est par sa sorte ({len(hors)})")
-    ok(all(any(f for _k, _s, f, _d in T[t]) for t in ("drums", "synth", "sampler", "delay", "reverb", "comp", "eq", "filter", "dist", "rythme",
-                                                       "analog", "acid", "plaits", "macro", "reverbe", "chorus", "rtt", "comp3", "eq3", "filtre",
-                                                       "satura", "crush", "table", "fount", "reel", "pong", "sprg", "mag", "horloge")),
+    # les moteurs du lot « odio-moteurs » (09/10) y sont nommés : le Résonateur, Physique, les Échantillons (banque)
+    ok(all(any(f for _k, _s, f, _d in T[t]) for t in ("drums", "synth", "sampler", "banque", "delay", "reverb", "comp", "eq", "filter", "dist", "rythme",
+                                                       "analog", "acid", "plaits", "macro", "resonateur", "physique", "reverbe", "chorus", "rtt", "comp3",
+                                                       "eq3", "filtre", "satura", "crush", "table", "fount", "reel", "pong", "sprg", "mag", "horloge")),
        "attracteurs, la table : chaque instrument, chaque effet, chaque jouet a de quoi être capté (la console et le lecteur n'ont que des niveaux)")
+    # un moteur neuf ne se contente pas de niveaux : ses réglages de forme, de coupure, d'enveloppe sont captés
+    ok(all(sum(1 for _k, _s, f, _d in T[t] if f) >= n for t, n in (("resonateur", 6), ("physique", 16), ("banque", 7), ("macro", 15))),
+       f"attracteurs, la table : le Résonateur, Physique, les Échantillons et Macro ont leurs réglages captés "
+       f"({ {t: sum(1 for _k, _s, f, _d in T[t] if f) for t in ('resonateur', 'physique', 'banque', 'macro')} })")
     # 3. les machines
     mach = R["machines"]
     ok(all(not m["mauvais"] for m in mach.values()),
@@ -242,7 +247,9 @@ def selftest(call, ok) -> None:
     ok(ml["ml_v2pitch"][3] == "tonalité" and ml["ml_v2pitch"][5] == "ODIO_01" and ml["ml_v1pitch"][3] == "tonalité" and not ml["ml_v1pitch"][4],
        "attracteurs, les machines : la table d'ODIO_01 décide d'abord ; un contrôle qu'elle nomme sans branchement est capté, pas entendu")
     om = R["operateurMachines"]
-    ok(len(om) >= 10 and all(not v["pas"] for v in om.values()) and all(om[k]["ok"] for k in ("ml", "mf", "a3", "tr", "t3", "pl", "vm")),
+    # chaque machine qui a un son, celles que le lot « odio-moteurs » a posées sur leurs vrais moteurs comprises
+    # (le POLY-6 sur le Synthé ; la MICROFREAK, le FM-6 et le STRINGS-4 sur Macro)
+    ok(len(om) >= 10 and all(not v["pas"] for v in om.values()) and all(om[k]["ok"] for k in ("ml", "mf", "a3", "tr", "p6", "f6", "s4", "t3", "pl", "vm")),
        f"attracteurs, les machines : chaque contrôle capté et branché joue son opérateur sur le réglage de son module ({om})")
     # 4. l'opérateur
     op = R["operateur"]

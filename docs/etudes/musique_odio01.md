@@ -323,6 +323,12 @@ qui déclarent leurs sortes ; le MINILOGUE XD sur le Synthé, la MICROFREAK, le
 FM-6 et le STRINGS-4 sur Macro) : 390 réglages continus, 326 captés, entendus
 pendant et rendus après — Résonateur 6 (8), Physique 16 (17), Macro 15 (16),
 MINILOGUE XD 11 (12) ; le selftest : POLY-6 14, FM-6 3, STRINGS-4 4.
+Une fois le lot « odio-moteurs » dans l'intégration (6745d28), le pilote
+rejoué dessus donne les mêmes chiffres (390, 326, 326, 0 pas rendu ; 28
+contrôles, 0 échec) et la garde nomme désormais ces moteurs et ces machines
+(le Résonateur, Physique, les Échantillons ; le POLY-6, le FM-6, le
+STRINGS-4) : un retrait de leurs sortes, ou un branchement qui ne vise plus un
+réglage de Macro, la fait échouer.
 
 Par sorte de module, entendus avant → après (sur n continus) : DR-9 0 → 17
 (26), Synthé 6 → 25 (26), Échantillonneur 1 → 4 (5), Lecteur 0 → 0 (1,
