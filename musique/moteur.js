@@ -837,6 +837,8 @@ export function joue(pat, m) {
   if (!m || !pat?.notes || !spec(m.type, 'arp')) return pat;
   return motifJoue(pat, (k) => val(m, k));
 }
+// Le swing d'une batterie (modules.js, SWING_PARAMS) : 50 quand sa source n'en a pas.
+export const swingDe = (m) => (m && spec(m.type, 'swing') ? val(m, 'swing') : 50);
 
 // ── le graphe d'un projet dans un contexte ──────────────────
 export class Graph {
@@ -1071,14 +1073,17 @@ export class Graph {
         continue;
       }
       const pat = pats.get(c.pat);
-      if (pat) this.notes(tr, c, joue(pat, this.entendu(mods.get(tr.src))), src, Math.max(b0, cs), Math.min(b1, ce), at, spb, cutLanes.get(tr.src));
+      const m = this.entendu(mods.get(tr.src));
+      if (pat) this.notes(tr, c, joue(pat, m), src, Math.max(b0, cs), Math.min(b1, ce), at, spb, cutLanes.get(tr.src), swingDe(m));
     }
   }
 
   // Les notes d'un clip de motif dont l'attaque tombe dans [from, to) : `at`
   // change un temps en instant de l'horloge ; `cutL` la coupure automatisée
-  // du synthé (l'arrangement seul la lit).
-  notes(tr, c, pat, src, from, to, at, spb, cutL = null) {
+  // du synthé (l'arrangement seul la lit) ; `sw` le swing d'une batterie (%) :
+  // un pas impair tombe à sw % de sa paire (50 : droit).
+  notes(tr, c, pat, src, from, to, at, spb, cutL = null, sw = 50) {
+    const decale = (sw - 50) / 200;   // en noires : (sw − 50) % d'une paire de doubles croches (une demi-noire)
     const plen = pat.steps / 4, cs = c.start, ce = c.start + c.len;
     const cutSpec = cutL ? spec('synth', 'cut') : null;
     // `off` (en noires) : où le motif en est au début du clip — un clip
@@ -1090,7 +1095,7 @@ export class Graph {
         for (const [v, arr] of Object.entries(pat.lanes || {})) {
           for (let s = 0; s < arr.length; s++) {
             if (!arr[s]) continue;
-            const b = base + s / 4;
+            const b = base + s / 4 + (s % 2 ? decale : 0);
             if (b >= from && b < to) src.hit(v, at(b), arr[s]);
           }
         }
@@ -1133,14 +1138,15 @@ export class Graph {
       const L = J.rec ? Infinity : s.len;
       if (!src || !(L > 0)) continue;
       const pat0 = s.pat ? p.patterns.find((x) => x.id === s.pat) : null;
-      const pat = pat0 && joue(pat0, this.entendu(p.modules.find((x) => x.id === tr.src)));
+      const msrc = this.entendu(p.modules.find((x) => x.id === tr.src));
+      const pat = pat0 && joue(pat0, msrc);
       for (let k = Math.max(0, Math.floor((a0 - J.origin) / L)); J.origin + k * L < a1 && k < 1e6; k++) {
         const vs = J.origin + k * L;
         const c = { ...s, start: vs, len: L === Infinity ? 1e5 : L };
         if (tr.kind === 'audio') {
           if (vs >= a0) this.audioClip(src, c, at(vs), vs, vs, Infinity, spb);
           else if (J.fresh === true || (typeof J.fresh === 'number' && vs >= J.fresh - 1e-9)) this.audioClip(src, c, at(a0), a0, vs, Infinity, spb);
-        } else if (pat && !J.rec) this.notes(tr, c, pat, src, Math.max(a0, vs), Math.min(a1, vs + c.len), at, spb);
+        } else if (pat && !J.rec) this.notes(tr, c, pat, src, Math.max(a0, vs), Math.min(a1, vs + c.len), at, spb, null, swingDe(msrc));
         if (L === Infinity) break;
       }
       J.fresh = false;

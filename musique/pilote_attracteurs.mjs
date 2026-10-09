@@ -164,8 +164,8 @@ async function audit() {
         if (j?.eff?.[c.k] !== undefined) return { v: NaN, par: 'mélange' };   // la fontaine le mélange en ce moment : rien à juger
         return { v: j ? j.V(c.k) : M.val(m, c.k), par: 'scène' };
       }
-      // l'arpège : lu par le planificateur sur le module (Graph.entendu depuis le 09/10 ; le projet avant)
-      if (c.k.startsWith('arp_')) return { v: M.val(g.entendu ? g.entendu(m) : m, c.k), par: 'arpège' };
+      // l'arpège, le swing : lus par le planificateur sur le module (Graph.entendu depuis le 09/10 ; le projet avant)
+      if (M.PLANIFIES ? M.PLANIFIES.has(c.k) : c.k.startsWith('arp_')) return { v: M.val(g.entendu ? g.entendu(m) : m, c.k), par: 'planificateur' };
       if (n?.odio && typeof n.odio.getParameter === 'function' && !def.jouet) return { v: n.odio.getParameter(c.k), par: 'getParameter' };
       const ap = n?.ap?.[c.k];
       if (ap?.length && !def.odio) return { v: ap[0][0].value, par: 'AudioParam', fn: true };
@@ -294,9 +294,43 @@ async function son() {
     fx('eq3', {});
     attracteur(mac, 'brillance');
     out.push(await rendu('Macro (AudioWorklet), timbre 0,05 → 0,46 et coupure 900 → 14 490 Hz (brillance, poids 0,1)'));
+    // le swing : une DR-9, un charley à chaque double croche, swing 75 % ; l'attracteur (anneau swing, poids 0,1)
+    // le ramène à 52,5 % pendant les temps 8 à 16 — le retard de chaque double croche impaire, mesuré dans le son
+    p.clips = p.clips.filter((c) => c.id !== 'cson');
+    const bt = app.addTrack('drums', { type: 'drums', name: 'Charley' });
+    const bp = p.patterns.find((x) => x.id === bt.pat);
+    bp.steps = 16; bp.lanes = { ch: Array(16).fill(1) };
+    p.clips.push({ id: 'cdr', track: bt.id, start: 0, len: 24, pat: bp.id });
+    const dr = p.modules.find((m) => m.id === bt.src);
+    Object.assign(dr, { w: 200, h: 200, params: { swing: 75 } });
+    p.banc = { segs: [{ id: 'sgsw', lane: 'ryt', d: 8, l: 8, atr: 'atsw' }],
+      atts: [{ id: 'atsw', segment: 'sgsw', nom: 'RYTHME', couleur: 'nd-ryt', x: dr.x + dr.w + 378, y: dr.y + dr.h / 2, r: 110, loi: 1,
+        anneaux: [{ facette: 'swing', couleur: 'nd-ryt', r: 420, ang: 0 }] }] };
+    app.commit('graph');
+    const buf = await E.renderMix(engine, p, 0, 24, { tail: 0, solo: bt.id });
+    const d = buf.getChannelData(0), sr = buf.sampleRate, spb = 60 / p.bpm;
+    let pk = 0;
+    for (const x of d) pk = Math.max(pk, Math.abs(x));
+    const seuil = pk * 0.2, attaques = [];
+    let calme = sr;   // échantillons sous le seuil depuis la dernière attaque
+    for (let i = 0; i < d.length; i++) {
+      if (Math.abs(d[i]) > seuil && calme > sr * 0.03) attaques.push(i / sr);
+      calme = Math.abs(d[i]) > seuil ? 0 : calme + 1;
+    }
+    // le retard d'une attaque sur la grille droite, en ms, pour chaque double croche impaire
+    const retard = (b0, b1) => {
+      const r = attaques.map((t) => t / spb).filter((b) => b >= b0 && b < b1).map((b) => b * 4).filter((x) => Math.round(x - 0.2) % 2 === 1)
+        .map((x) => (x - Math.floor(x + 0.25)) * spb / 4 * 1000);
+      return r.length ? Math.round(r.reduce((a, x) => a + x, 0) / r.length * 10) / 10 : null;
+    };
+    out.push({ nom: 'swing de la DR-9, 75 % → 52,5 % (swing, poids 0,1)', attaques: attaques.length, retards: [retard(0.5, 8), retard(8.5, 16), retard(16.5, 24)] });
     return out;
   });
   writeFileSync(`${out}/son.json`, JSON.stringify(R, null, 1));
+  const sw = R.pop();
+  console.log(`  ${sw.nom} : ${sw.attaques} attaques ; retard d'une double croche impaire : ${sw.retards.join(' → ')} ms`);
+  ok(sw.attaques === 96 && Math.abs(sw.retards[0] - 62.5) < 3 && Math.abs(sw.retards[1] - 6.25) < 3 && Math.abs(sw.retards[2] - 62.5) < 3,
+    `le son, le swing : 96 doubles croches ; 62,5 ms de retard à 75 %, 6,25 ms pendant que l'attracteur parle (52,5 %), puis 62,5 ms (${sw.retards.join(' → ')} ms)`);
   for (const r of R) {
     // une mesure = quatre temps (2 s à 120) : 1-2 avant le segment (temps 0-8), 3-4 pendant (8-16), 5-6 après
     console.log(`  ${r.nom} : ${r.mesures.map((m) => `${m.centre} Hz ${m.rms} dB`).join(' | ')} — rendu ${r.ms} ms pour ${r.secondes} s`);

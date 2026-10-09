@@ -173,6 +173,10 @@ if (synced === true) {
   const syn = p.modules.find((x) => x.type === 'synth');
   R.arpege = { entendu: g.entendu(syn).params.arp_gate, carte: g._influence.get(syn.id)?.get('arp_gate')?.v, projet: syn.params.arp_gate };
   R.jouet = { valeur: g.valeur('m_pong', 'grav'), carte: g._influence.get('m_pong')?.get('grav')?.v };
+  // le swing d'une batterie : un pas impair tombe à swing % de sa paire ; capté, le planificateur lit l'opérateur
+  const coups = (sw) => { const t = []; g.notes({ kind: 'drums' }, { start: 0, len: 4 }, { steps: 16, lanes: { bd: Array(16).fill(1) } }, { hit: (v, at) => t.push(at) }, 0, 4, (b) => b, 0.5, null, sw); return t; };
+  const dr = p.modules.find((x) => x.type === 'drums');
+  R.swing = { droit: coups(50).slice(0, 3), ternaire: coups(66).slice(0, 3), entendu: E.swingDe(g.entendu(dr)), projet: E.swingDe(dr), carte: g._influence.get(dr.id)?.get('swing')?.v };
   // à l'arrêt, tout revient
   recu.clear();
   g.settle(p, 1);
@@ -256,4 +260,8 @@ def selftest(call, ok) -> None:
     ar, jo = R["arpege"], R["jouet"]
     ok(ar["entendu"] == ar["carte"] and ar["entendu"] != ar["projet"], f"attracteurs, le moteur : l'arpège lit la durée entendue ({ar})")
     ok(jo["valeur"] == jo["carte"] and jo["valeur"] is not None, f"attracteurs, le moteur : une scène de jouet lit la valeur entendue ({jo})")
+    sw = R["swing"]
+    ok(sw["droit"] == [0, 0.25, 0.5] and abs(sw["ternaire"][1] - 0.33) < 1e-9 and sw["ternaire"][2] == 0.5,
+       f"attracteurs, le swing : un pas impair tombe à swing % de sa paire, 50 droit, 66 ternaire ({sw['droit']} {sw['ternaire']})")
+    ok(sw["entendu"] == sw["carte"] and sw["entendu"] != sw["projet"], f"attracteurs, le swing : capté (facette swing), le planificateur lit l'opérateur ({sw})")
     ok(not R["rendu"]["pasRendu"] and R["rendu"]["influence"] == 0, f"attracteurs, le moteur : à l'arrêt, chaque réglage reprend sa valeur ({R['rendu']})")

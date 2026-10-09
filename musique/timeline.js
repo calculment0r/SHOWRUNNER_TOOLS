@@ -66,7 +66,7 @@ import { toast, api, ITEM_MIME, MULTI_MIME, uploadFile, declareZone } from '../c
 import { poserObjets } from './panneau.js';
 import { MODULES, TRACK_KINDS, COLORS, COLOR_FR, AUTOMATABLE, SECTION_TAGS, SECTION_NAMES, SOURCES_OF,
   spec, val, fmt, fromNorm, drumVoicesOf, guessTag, moduleName } from './modules.js';
-import { peaks, projEnd, interp, clipBuffer, audioGeom, joue } from './moteur.js';
+import { peaks, projEnd, interp, clipBuffer, audioGeom, joue, swingDe } from './moteur.js';
 import { el, knob, fader, menu, tok, clamp, put, confirmBox, inlineEdit, splitter, letter } from './ui.js';
 import { sectionAt, duplicateSection, moveSection, swapSection, removeSection, trimStart, rangerGroupes } from './projet.js';
 import { createDock } from './editeurs.js';
@@ -1614,7 +1614,7 @@ export function createTimeline(app) {
       g.notes(tr, c, joue(pat, mods.get(tr.src)), {
         noteOn: (pitch, at, v, d, over) => prendre({ at, pitch, v, d, ac: !!over?.ac }),
         hit: (voix, at, v) => prendre({ at, voix, v }),
-      }, Math.max(lo, cs), Math.min(hi, ce), (x) => x, spb);
+      }, Math.max(lo, cs), Math.min(hi, ce), (x) => x, spb, null, swingDe(mods.get(tr.src)));   // le swing d'une batterie (09/10)
       if (!evs.length) continue;
       const pres = avant ? Math.max(...evs.map((x) => x.at)) : Math.min(...evs.map((x) => x.at));
       const cur = parPiste.get(tr.id);

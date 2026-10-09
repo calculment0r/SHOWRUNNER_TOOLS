@@ -83,6 +83,12 @@
  * Contrat que doit remplir tout instrument branché au séquenceur.
  * Trois implémentations natives sont fournies ; un adaptateur WAM viendra
  * s'ajouter ici sans rien changer au reste du moteur.
+ *
+ * SHOWRUNNER (09/10) : setParameter(id, valeur, temps?) — `temps`, facultatif,
+ * est l'instant de l'horloge où le réglage prend effet (un attracteur, une
+ * automation : moteur.js, odioSource). Un instrument qui tient un réglage dans
+ * le temps (un AudioParam, l'AudioWorklet de Plaits et de Macro) l'y pose ; les
+ * autres le lisent à l'attaque des notes qui partent ensuite.
  */
 
 

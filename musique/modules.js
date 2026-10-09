@@ -80,8 +80,16 @@ export const ARP_PARAMS = [
   P('arp_oct', 'Octaves', 1, 4, 1, '', 'lin', 1),
   P('arp_gate', 'Durée', 0.05, 1, 0.5, ''),
 ];
-const ARP_KEYS = new Set(ARP_PARAMS.map((x) => x.k));
 const ARP_SORTES = { arp_oct: 'hauteur', arp_gate: 'duree' };
+// LE SWING des batteries (09/10 : la facette « swing » de la lane RYTHME n'avait
+// rien à capter) : la seconde double croche de chaque paire tombe à swing % de la
+// paire — 50 % droit, 66 % ternaire, 75 % au plus : la loi de la MPC de Roger Linn
+// (« 50 % swing means no swing, 66 % is a perfect triplet swing », entretien à
+// Attack Magazine, 2013). Lu au moment de planifier les coups (moteur.js,
+// Graph.notes), comme l'arpège : il ne s'automatise pas.
+export const SWING_PARAMS = [P('swing', 'Swing', 50, 75, 50, '%')];
+// ce que lit le planificateur, pas un nœud du son : l'arpège, le swing
+export const PLANIFIES = new Set([...ARP_PARAMS, ...SWING_PARAMS].map((x) => x.k));
 
 // LES SORTES DES RÉGLAGES (09/10, musique/facettes.js) : chaque module dit,
 // pour chacun de ses réglages continus, ce qu'il est ; la sorte donne la
@@ -93,7 +101,7 @@ export const MODULES = {
   // ── sources ──
   drums: {
     name: 'DR-9', kind: 'boîte à rythmes', role: 'source', color: 'or',
-    params: drumParams, face: ['lvl'], sortes: drumSortes,
+    params: [...drumParams, ...SWING_PARAMS], face: ['lvl'], sortes: { ...drumSortes, swing: 'swing' },
   },
   synth: {
     name: 'Synthé', kind: 'soustractif', role: 'source', color: 'cy',
@@ -327,9 +335,10 @@ function fromOdio(d) {
   for (const [type, def] of Object.entries(ODIO)) {
     const inst = new def.cls(probe);
     const params = inst.getParameters().filter((d) => !(def.skip || []).includes(d.id)).map(fromOdio);
-    const arp = def.role === 'source' && !def.drum;
+    const arp = def.role === 'source' && !def.drum, swing = def.role === 'source' && def.drum;
     if (arp) params.push(...ARP_PARAMS);   // l'arpège : lu par le moteur, pas par l'instrument
-    MODULES[type] = { ...def, odio: true, params, sortes: { ...def.sortes, ...(arp ? ARP_SORTES : {}) } };
+    if (swing) params.push(...SWING_PARAMS);   // le swing d'une batterie, de même
+    MODULES[type] = { ...def, odio: true, params, sortes: { ...def.sortes, ...(arp ? ARP_SORTES : {}), ...(swing ? { swing: 'swing' } : {}) } };
     inst.dispose?.();
   }
 }
@@ -374,7 +383,7 @@ export const AUTOMATABLE = {
 // les modules d'ODIO : tout réglage continu, posé par setParameter(id, valeur,
 // instant) — un effet l'applique à l'instant dit, un instrument aux notes
 // qui partent ensuite (leur contrat, odio/types.js)
-for (const t of ODIO_TYPES) AUTOMATABLE[t] = MODULES[t].params.filter((p) => !p.opts && !ARP_KEYS.has(p.k)).map((p) => p.k);
+for (const t of ODIO_TYPES) AUTOMATABLE[t] = MODULES[t].params.filter((p) => !p.opts && !PLANIFIES.has(p.k)).map((p) => p.k);
 
 export const spec = (type, k) => MODULES[type].params.find((p) => p.k === k);
 export const val = (mod, k) => {
