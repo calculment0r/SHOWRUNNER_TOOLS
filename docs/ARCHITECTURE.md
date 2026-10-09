@@ -703,7 +703,8 @@ Admin → Teams.
   retirer, les Teams personnelles à renommer) ; `POST {comptes, teams, retirer_membres,
   renommer, confirme: "MENAGE"}` : tout est jugé avant le premier geste, puis les Teams
   détruites, les comptes supprimés (`admin.supprimer_compte`, le chemin d'Admin → Personnes),
-  chaque Team restante réduite à son propriétaire, les noms ; jamais Cal ni un admin.
+  chaque Team restante réduite à son propriétaire, les noms ; jamais Cal ni un admin. Les invités qui
+  attendent Cal (ci-dessous) n'en sont pas : Admin → Demandes les valide ou les refuse.
 - **Cal valide les invités** (09/10, l'étude, « Fait le 09/10 ») : un pseudo neuf mis dans une Team
   par un autre que Cal (un admin du portail compte comme Cal) — `add_member`, ou le lien d'une Team
   fait par un non-Cal — naît `pending` avec `invited {by, team, role, guest?, spaces?, at}` ; sa

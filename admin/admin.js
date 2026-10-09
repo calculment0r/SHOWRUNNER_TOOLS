@@ -1033,9 +1033,11 @@ function menageCard() {
   const nWs = tSel.reduce((a, t) => a + t.spaces.length, 0), nObj = tSel.reduce((a, t) => a + t.objets + t.documents, 0);
   const lone = d.comptes.filter((c) => c.guest && !selC.has(c.id));   // un guest gardé qu'on retire de tout : il n'entre plus nulle part
   const plan = [selC.size ? `supprimer ${plural(selC.size, 'compte', 'comptes')}` : '',
-    selT.size ? `détruire ${plural(selT.size, 'Team', 'Teams')} (${plural(nWs, 'Workspace', 'Workspaces')}, ${plural(nObj, 'chose', 'choses')} à la corbeille)` : '',
+    selT.size ? `détruire ${plural(selT.size, 'Team', 'Teams')} (${plural(nWs, 'Workspace', 'Workspaces')}, ${plural(nObj, 'objet ou document', 'objets et documents')} à la corbeille)` : '',
     M.strip && strip.length ? `retirer ${plural(strip.length, 'appartenance', 'appartenances')}` : '',
     M.rename && d.renommer.length ? `renommer ${plural(d.renommer.length, 'Team personnelle', 'Teams personnelles')} « My Team »` : ''].filter(Boolean);
+  // rien à faire : rien de coché, ou ce qui est coché est déjà fait (personne à retirer, plus de « Chez moi »)
+  const nothing = selC.size || selT.size || M.strip || M.rename ? 'rien à faire : tout est déjà en ordre' : 'coche d’abord ce qu’il faut faire';
   const box = (on, onchange, disabled, title) => el('input', { type: 'checkbox', checked: on || null, disabled: disabled || M.run || null, title: title || null, onchange });
   const go = () => confirmBox('Le grand ménage', `${plan.join(' ; ')}. Le contenu de la My Team de chacun reste. Les comptes supprimés ne reviennent pas ; `
     + 'un Workspace détruit se rend depuis Stockage. Ça ne s’annule pas d’ici.', 'Appliquer le ménage', async (mot) => {
@@ -1060,7 +1062,7 @@ function menageCard() {
       el('span', { class: 'nm-s' }, c.pseudo || c.name), c.guest ? el('span', { class: 'chip amb' }, 'guest') : null,
       el('span', { class: 'many-meta' }, [`créé ${fmtDate(c.created)}${c.by_name ? ` par ${c.by_name}` : ''}`,
         c.teams.length ? c.teams.map((t) => t.name).join(' · ') : 'dans aucune Team',
-        c.items ? `${plural(c.items, 'chose', 'choses')} chez lui (restent)` : ''].filter(Boolean).join(' · ')))))
+        c.items ? `${plural(c.items, 'objet ou document', 'objets et documents')} dans sa My Team (restent)` : ''].filter(Boolean).join(' · ')))))
       : el('p', { class: 'why' }, 'aucun compte créé par une Team'),
     // (b) les Teams partagées
     el('span', { class: 'lbl' }, `teams partagées · ${d.teams.length}`),
@@ -1086,9 +1088,9 @@ function menageCard() {
       + `qui attend${d.attente.length > 1 ? 'ent' : ''} ta validation — pas des comptes du ménage : tu ${d.attente.length > 1 ? 'les' : 'le'} valides ou refuses dans Demandes`),
     el('button', { class: 'tb ghost sm', type: 'button', onclick: () => go('demandes') }, 'Demandes')) : null,
     M.strip && lone.length ? el('p', { class: 'why' }, `${lone.map((c) => c.pseudo || c.name).join(', ')} : entré${lone.length > 1 ? 's' : ''} comme guest, sans My Team — gardé${lone.length > 1 ? 's' : ''} et retiré${lone.length > 1 ? 's' : ''} de tout, il${lone.length > 1 ? 's' : ''} n’entre${lone.length > 1 ? 'nt' : ''} plus nulle part`) : null,
-    el('div', { class: 'row' }, el('span', { class: 'lbl' }, plan.length ? 'ce qu’il va faire' : 'rien de coché'), el('span', { class: 'sp' }),
+    el('div', { class: 'row' }, el('span', { class: 'lbl' }, plan.length ? 'ce qu’il va faire' : nothing), el('span', { class: 'sp' }),
       el('button', { class: 'tb go', type: 'button', 'data-menage-go': '', disabled: M.run || !plan.length || null,
-        title: plan.length ? plan.join(' ; ') : 'coche d’abord ce qu’il faut faire', onclick: go }, M.run ? 'Ménage en cours…' : 'Appliquer le ménage')),
+        title: plan.length ? plan.join(' ; ') : nothing, onclick: go }, M.run ? 'Ménage en cours…' : 'Appliquer le ménage')),
     plan.length ? el('p', { class: 'adm-note' }, `${plan.join(' ; ')}.`) : null,
     R ? el('div', { class: 'bulk-out', role: 'status', 'aria-live': 'polite' },
       el('span', { class: 'lbl' }, 'le rapport'),
@@ -1443,7 +1445,7 @@ function destroyedCard() {
     el('div', { class: 'ws-list' }, ...list.map((w) => {
       const homes = w.auteurs.filter((a) => a.home);
       const to = choice[w.id] || w.vers;
-      const opts = [...homes.map((a) => [a.id, `My Team de ${a.name} · ${plural(a.n, 'chose', 'choses')}`]),
+      const opts = [...homes.map((a) => [a.id, `My Team de ${a.name} · auteur de ${plural(a.n, 'objet ou document', 'objets et documents')}`]),
         ...(homes.some((a) => a.id === w.vers) ? [] : [[w.vers, `My Team de ${w.vers_name}`]])];
       const docs = Object.entries(w.documents || {}).map(([k, n]) => `${n} ${DOCS_FR[k] || k}`);
       const lost = w.objets - w.objets_la;
