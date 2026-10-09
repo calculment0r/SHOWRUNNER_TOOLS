@@ -132,7 +132,8 @@ async function loadSection() {
     if (S.sec === 'teams' || S.sec === 'personnes') await loadTeams();
     if (S.sec === 'tableau') await loadTableau();
     if (S.sec === 'demandes' && S.porte === undefined) await loadPorte();
-    if (S.sec === 'demandes' && !S.limited) await loadAlertes();
+    // les alertes : Cal seul, donc après admin/state (au premier go(), on ne sait pas encore qui l'on est)
+    if (S.sec === 'demandes' && S.state) await loadAlertes();
     if (S.sec === 'machines') S.mach = await api('admin/machines');
     if (S.sec === 'cablage') S.sw = await api('admin/switches');
     if (S.sec === 'stockage') [S.store, S.detr] = await Promise.all([api('admin/storage'), api('admin/detruits').catch(() => null)]);
