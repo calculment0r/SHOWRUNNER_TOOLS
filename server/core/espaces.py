@@ -15,8 +15,10 @@ Le modèle
     lui, l'espace par défaut de l'instance, « Général » — le code n'a jamais
     de « sans Workspace »). Rôles de Workspace : `admin`, `editor`,
     `commenter`, `viewer` ; un membre de la Team y a le rôle par défaut du
-    Workspace (`default_role`, « none » : sur invitation seulement) ou celui
-    qu'on lui a posé ; un owner ou admin de Team est admin de chacun.
+    Workspace (`default_role`) ou celui qu'on lui a posé ; un owner ou admin de
+    Team est admin de chacun. Décision de Cal du 09/10 (D3) : les membres d'une
+    Team voient TOUS ses Workspaces — plus de « none » (sur invitation) : un
+    `none` d'avant vaut `viewer` (_profile), on ne le pose plus.
   - Un **guest** n'entre que dans les Workspaces où on l'a mis. Décision 2 de
     Cal : son rôle se règle dans l'administration d'un utilisateur —
     « viewer » (voit seulement) ou « acteur » (peut modifier). Viewer ou
@@ -111,6 +113,9 @@ SPACE_RX = re.compile(r"esp-[a-z0-9][a-z0-9-]{1,47}")
 TOKEN_RX = re.compile(r"(inv-[0-9a-f]{8})\.([A-Za-z0-9_-]{20,64})")
 
 TEAM_FR = {"owner": "propriétaire", "admin": "admin", "member": "membre", "guest": "guest"}
+# D3 (Cal, 09/10 : « les gens dans la même team voient tous les workspaces de la team ») : le refus d'un « none »
+NO_NONE = ("le rôle par défaut : admin, editor, commenter ou viewer — un membre de la Team voit tous ses Workspaces "
+           "(pour n'y mettre que certains, fais-en des guests)")
 SPACE_FR = {"admin": "admin", "editor": "éditeur", "commenter": "commentateur", "viewer": "lecteur", "none": "sur invitation"}
 GUEST_FR = {"viewer": "viewer · voit seulement", "acteur": "acteur · peut modifier"}
 
@@ -358,7 +363,9 @@ def _profile(db: dict, u, sid: str, superpower: bool = True) -> str | None:
             return None
         return "guest_acteur" if m.get("guest") == "acteur" else "guest_viewer"
     r = mine.get("role") or sp.get("default_role") or "editor"
-    return {"admin": "space_admin", "editor": "editor", "commenter": "commenter", "viewer": "viewer"}.get(r)
+    # D3 (Cal, 09/10) : un membre voit tous les Workspaces de sa Team — un « none » d'avant le 09/10
+    # (sur invitation) vaut lecteur : rien ne cache un Workspace à un membre, par construction
+    return {"admin": "space_admin", "editor": "editor", "commenter": "commenter", "viewer": "viewer", "none": "viewer"}.get(r)
 
 
 def profile(u, sid: str | None) -> str | None:
@@ -639,7 +646,9 @@ def _can_map(u, sid: str) -> dict:
 def _space_public(db: dict, u, sid: str, detail: bool) -> dict:
     sp = db["spaces"][sid]
     out = {"id": sid, "name": sp["name"], "team": sp["team"], "archived": sp.get("archived"),
-           "default_role": sp.get("default_role") or "editor", "role": space_role(u, sid), "profile": profile(u, sid),
+           # un « none » d'avant le 09/10 se lit comme il agit : lecteur (D3, _profile)
+           "default_role": {"none": "viewer"}.get(sp.get("default_role") or "editor", sp.get("default_role") or "editor"),
+           "role": space_role(u, sid), "profile": profile(u, sid),
            **_can_map(u, sid)}
     no = _destroy_space_why(db, u, sid)   # détruire (D4) : la même phrase que le refus de la route
     out["can"]["destroy"] = no is None
@@ -667,7 +676,8 @@ def _team_public(db: dict, u, tid: str, detail: bool) -> dict:
         inv_ok, inv_why = False, "inviter dans la Team : son propriétaire ou un de ses admins"
     ren_why = _rename_why(t, u)
     no = _destroy_team_why(db, u, tid)
-    out = {"id": tid, "name": t["name"], "plan": plan_of(t), "personal": bool(t.get("personal")), "owner": t.get("owner"),
+    out = {"id": tid, "name": t["name"], "label": label_of(t, uid), "plan": plan_of(t), "personal": bool(t.get("personal")),
+           "owner": t.get("owner"),
            "owner_name": auth.display_name(t.get("owner")), "api": bool(t.get("api")), "archived": t.get("archived"),
            "role": me.get("role") or ("admin" if auth.is_admin(u) else None), "guest": me.get("guest"), "member": bool(me),
            "manage": manage, "invite": inv_ok, "invite_why": inv_why,
@@ -888,9 +898,10 @@ def update_team(u, tid: str, patch: dict) -> dict:
 
 
 def create_space(u, tid: str, name, default_role: str = "editor") -> dict:
+    """Un Workspace neuf : ouvert à tout membre de la Team, éditeur par défaut (D3, 09/10)."""
     name = clean_name(name, "le nom du Workspace")
-    if default_role not in SPACE_ROLES + ("none",):
-        raise HttpError(400, "le rôle par défaut : admin, editor, commenter, viewer ou none")
+    if default_role not in SPACE_ROLES:
+        raise HttpError(400, NO_NONE)
     with _lock:
         db = _data()
         t = _team_or_404(db, tid)
@@ -924,8 +935,8 @@ def update_space(u, sid: str, patch: dict) -> dict:
         if "name" in patch:
             sp["name"] = done["name"] = clean_name(patch["name"], "le nom du Workspace")
         if "default_role" in patch:
-            if patch["default_role"] not in SPACE_ROLES + ("none",):
-                raise HttpError(400, "le rôle par défaut : admin, editor, commenter, viewer ou none")
+            if patch["default_role"] not in SPACE_ROLES:
+                raise HttpError(400, NO_NONE)
             sp["default_role"] = done["default_role"] = patch["default_role"]
         if "archived" in patch:
             _need(manage, "archiver un Workspace : un admin de la Team")
@@ -1168,8 +1179,8 @@ def forget_user(uid: str) -> dict:
 
 def set_space_member(u, sid: str, uid: str, role: str | None) -> dict:
     """Dans un Workspace : le rôle d'un membre de la Team (admin, editor, commenter,
-    viewer, none ; null : le rôle par défaut), ou un guest qu'on y met (`guest`) ou
-    qu'on en sort (null). Un admin du Workspace ou de la Team."""
+    viewer ; null : le rôle par défaut — D3 : jamais « none », un membre voit tout), ou un
+    guest qu'on y met (`guest`) ou qu'on en sort (null). Un admin du Workspace ou de la Team."""
     with _lock:
         db = _data()
         sp = _space_or_404(db, sid)
@@ -1191,8 +1202,8 @@ def set_space_member(u, sid: str, uid: str, role: str | None) -> dict:
             else:
                 mem.pop(uid, None)
         else:
-            if role not in SPACE_ROLES + ("none", None):
-                raise HttpError(400, "le rôle : admin, editor, commenter, viewer, none, ou null (le défaut)")
+            if role not in SPACE_ROLES + (None,):
+                raise HttpError(400, NO_NONE.replace("le rôle par défaut", "le rôle") + " ; null : le rôle par défaut")
             if role is None:
                 mem.pop(uid, None)
             else:
@@ -1313,7 +1324,7 @@ def _destroy_space_why(db: dict, u, sid: str) -> tuple[int, str] | None:
     tid = sp["team"]
     if not can_manage(u, tid):
         return 403, "détruire un Workspace : le propriétaire ou un admin de sa Team, ou Cal"
-    if sid == db.get("default"):
+    if sid in (db.get("default"), GENERAL):
         return 409, "c'est le Workspace par défaut de l'instance (Général) : il ne se détruit pas"
     if not any(x["team"] == tid and s != sid and not x.get("archived") for s, x in db["spaces"].items()):
         t = db["teams"].get(tid) or {}

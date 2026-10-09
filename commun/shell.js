@@ -813,6 +813,9 @@ export function toolHref(t, sys) {
 // leurs Workspaces tels que le portail les rend (/api/auth/me → teams : un guest n'y a
 // que les siens, par construction), « + Nouveau Workspace » dans une Team qu'on gère,
 // « Réglages de la Team » (admin/#teams). Discret : il ne prend la couleur qu'au survol.
+// Le nom d'une Team : `label` (la My Team d'un autre dit à qui elle est — chacun a la sienne,
+// toutes nées « My Team » : core/espaces.py, label_of).
+const teamLabel = (t) => (t && (t.label || t.name)) || '';
 const WS_ROLE = { admin: 'admin', editor: 'éditeur', commenter: 'commentateur', viewer: 'viewer' };
 let wsMenu = null;
 function espaceCourant(me = lastMe) {
@@ -822,7 +825,7 @@ function espaceCourant(me = lastMe) {
   return w ? { t: { name: w.team_name, id: w.team }, s: w } : null;
 }
 function nomEspace(id, me = lastMe) {
-  for (const t of (me && me.teams) || []) for (const s of t.spaces || []) if (s.id === id) return `${t.name} / ${s.name}`;
+  for (const t of (me && me.teams) || []) for (const s of t.spaces || []) if (s.id === id) return `${teamLabel(t)} / ${s.name}`;
   return id;
 }
 function paintEspace() {
@@ -832,10 +835,10 @@ function paintEspace() {
   box.hidden = !cur;
   if (!cur) return;
   const btn = box.querySelector('.sr-ws-btn');
-  btn.querySelector('.sr-tm').textContent = cur.t.name || '';
+  btn.querySelector('.sr-tm').textContent = teamLabel(cur.t);
   btn.querySelector('.sr-wsn').textContent = cur.s.name || '';
   const doc = docEspace && docEspace !== ESPACE ? nomEspace(docEspace) : '';
-  btn.title = `Team ${cur.t.name} · Workspace ${cur.s.name}${cur.s.role ? ` · ${WS_ROLE[cur.s.role] || cur.s.role}` : ''}`
+  btn.title = `Team ${teamLabel(cur.t)} · Workspace ${cur.s.name}${cur.s.role ? ` · ${WS_ROLE[cur.s.role] || cur.s.role}` : ''}`
     + (doc ? `\nle document ouvert est dans ${doc}` : '') + '\nchanger de Workspace';
   const note = box.querySelector('.doc');
   note.hidden = !doc;
@@ -895,8 +898,10 @@ function paintMenu() {
     if (t.archived) continue;
     const spaces = (t.spaces || []).filter((s) => !s.archived || s.id === ESPACE);
     if (!spaces.length && !t.manage) continue;
-    const role = t.role === 'guest' ? `guest · ${t.guest || 'viewer'}` : t.personal ? '' : ({ owner: 'propriétaire', admin: 'admin', member: 'membre' }[t.role] || '');
-    rows.push(el('div', { class: 'sr-ws-team' }, el('span', { class: 'n' }, t.name), role ? el('span', { class: 'r' }, role) : null));
+    // sa propre My Team ne dit pas de rôle ; celle d'un autre (D2 : elle invite) dit qui l'on y est
+    const role = t.role === 'guest' ? `guest · ${t.guest || 'viewer'}` : t.personal && t.role === 'owner' ? ''
+      : ({ owner: 'propriétaire', admin: 'admin', member: 'membre' }[t.role] || '');
+    rows.push(el('div', { class: 'sr-ws-team' }, el('span', { class: 'n' }, teamLabel(t)), role ? el('span', { class: 'r' }, role) : null));
     for (const s of spaces) {
       const on = s.id === ESPACE;
       const lim = s.can && !s.can.edit ? (WS_ROLE[s.role] || s.role || 'lecture') : '';
@@ -918,7 +923,7 @@ function paintMenu() {
   if (focus) wsMenu.querySelector('.sr-ws-add input')?.focus();
 }
 function addRow(t) {
-  const inp = el('input', { class: 'fld', maxlength: 40, placeholder: 'nom du Workspace', 'aria-label': `le nom du nouveau Workspace de ${t.name}`,
+  const inp = el('input', { class: 'fld', maxlength: 40, placeholder: 'nom du Workspace', 'aria-label': `le nom du nouveau Workspace de ${teamLabel(t)}`,
     oninput: () => { wsAdd.v = inp.value; } });
   inp.value = wsAdd.v || '';
   const err = el('p', { class: 'why', hidden: true });

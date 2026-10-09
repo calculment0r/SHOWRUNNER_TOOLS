@@ -2643,7 +2643,7 @@ def _selftest_registres(call, ok) -> None:
 
 
 def _selftest_apps(call, ok) -> None:
-    """Un ami « Apps » (un compte sans le Studio, qui n'a que son Workspace « Perso ») invité
+    """Un ami « Apps » (un compte sans le Studio, qui n'a que sa My Team) invité
     comme éditeur sur la planche P de Cal (dans Général) : le lien lui ouvre P — la page
     d'Idéation, le direct, la co-édition, les objets posés sur P —, et rien d'autre du Studio ;
     ce qui calcule (l'export, le PNG, un travail d'Idéation) reste refusé, et dit pourquoi.
@@ -2704,7 +2704,7 @@ def _selftest_apps(call, ok) -> None:
         ok(s == 200 and rd.get("role") == "editor" and not rd.get("guest") and auth.user("aurore-apps")["role"] == "ami",
            f"apps : le lien d'éditeur l'accepte sur P — elle reste une amie Apps, pas une invitée ({s} {rd})")
         s, me1 = G("GET", "/api/auth/me")
-        _perso = lambda _tok: (me1.get("workspace") or {}).get("id")   # noqa: E731 — son Workspace « Perso »
+        _perso = lambda _tok: (me1.get("workspace") or {}).get("id")   # noqa: E731 — le Workspace de sa My Team
         ok((me1.get("studio") or {}).get("ici") is False and me1["studio"].get("liens") == ["ideation"]
            and me1["user"]["access"] == "apps", f"apps : /api/auth/me dit le lien (studio.liens) ({me1.get('studio')})")
         s1, _, _, _ = PP._req(home, "GET", "/ideation/", cookies={auth.COOKIE: A})

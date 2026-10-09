@@ -315,14 +315,14 @@ def menage_preview(u) -> dict:
     where: dict[str, list] = {}
     for t in teams:
         for m in t.get("members") or []:
-            if not t["personal"]:
-                where.setdefault(m["id"], []).append({"id": t["id"], "name": t["name"], "role": m["role"]})
+            if m["id"] != t["owner"] or not t["personal"]:   # sa propre My Team n'est pas une Team « où on l'a mis »
+                where.setdefault(m["id"], []).append({"id": t["id"], "name": espaces.label_of(t, None), "role": m["role"]})
     comptes = []
     for x in auth.users_public():
         if x.get("via") != "equipe" or x.get("state") == "pending" or _spared(x["id"]):
             continue
         by = (auth.user(x["id"]) or {}).get("by")
-        comptes.append({"id": x["id"], "name": x["name"], "pseudo": x["pseudo"], "state": x["state"],
+        comptes.append({"id": x["id"], "name": x["name"], "pseudo": x["pseudo"], "state": x["state"], "guest": not x.get("perso"),
                         "created": x.get("accepted") or x.get("created"), "by": by, "by_name": auth.display_name(by),
                         "items": 0, "teams": where.get(x["id"], [])})
     cand = {c["id"] for c in comptes}
@@ -415,6 +415,8 @@ def _budget_out(u, tid: str, space: str | None = None) -> dict:
     manage = espaces.can_manage(u, tid)
     out = jobs.budget_view(tid, u, space, detail=manage)
     t = espaces.team(tid) or {}
+    if t:   # le nom pour la personne : la My Team d'un autre dit à qui elle est (l'accueil, sa pastille GPU)
+        out["label"] = espaces.label_of(t, (u or {}).get("id"))
     out["manage"] = manage and (not t.get("personal") or auth.is_admin(u))
     if manage and not out["manage"]:
         out["manage_why"] = "le budget de My Team : Cal le règle"
@@ -645,8 +647,18 @@ def _http(ok, H, same) -> None:
     ok(s == 200, f"équipes : l'admin du Workspace y fait un guest ({s} {err(d)})")
     s, d, _ = P(f"/api/equipes/{tid}/membres", {"pseudo": "Ivo Essai", "role": "member"}, tok=A)
     ok(s == 403, f"équipes : … mais pas un membre de la Team ({s} {err(d)[:60]})")
+    # D3 (Cal, 09/10) : un membre voit tous les Workspaces de sa Team — « none » (sur invitation) ne se pose plus,
+    # et un « none » d'avant vaut lecteur
     s, d, _ = P(f"/api/espaces/{s2}/membres/ana-essai", {"role": "none"})
-    ok(s == 200 and not espaces.can_view(ana, s2), f"équipes : « none » : dehors ({s})")
+    s2_, d2, _ = P(f"/api/espaces/{s2}", {"default_role": "none"})
+    s3_, d3, _ = P(f"/api/equipes/{tid}/espaces", {"name": "Caché", "default_role": "none"})
+    ok(s == 400 and s2_ == 400 and s3_ == 400 and "voit tous ses Workspaces" in err(d2) and espaces.can_edit(ana, s2),
+       f"équipes : « none » refusé partout, la phrase dit pourquoi (D3) ({s} {s2_} {s3_} {err(d2)[:60]})")
+    with espaces._lock:   # un rôle « none » d'avant le 09/10, dans le fichier
+        espaces._data()["spaces"][s2]["members"]["ana-essai"] = {"role": "none"}
+        espaces._save()
+    ok(espaces.can_view(ana, s2) and not espaces.can_comment(ana, s2) and espaces.space_role(ana, s2) == "viewer",
+       "équipes : un « none » d'avant vaut lecteur : le membre voit le Workspace (D3)")
     P(f"/api/espaces/{s2}/membres/ana-essai", {"role": None})
     ok(espaces.can_edit(ana, s2), "équipes : null : le rôle par défaut du Workspace revient")
 
@@ -1264,6 +1276,9 @@ def _my_team(ok, H, same) -> None:
 
     # D3 : les membres d'une Team voient tous ses Workspaces — ceux d'après leur arrivée compris
     s, t, _ = P("/api/equipes", {"name": "Bords Myteam"}, tok=noe)
+    s2, d2, _ = P("/api/equipes", {"name": "Pas Myteam"}, tok=abi)
+    ok(s == 200 and t.get("owner") == "noe-myteam" and s2 == 403 and "Studio" in err(d2),
+       f"my team : un compte Studio crée d'autres Teams ; un compte Apps non, et la phrase dit pourquoi ({s} {s2} {err(d2)[:60]})")
     tid = t["id"]
     P(f"/api/equipes/{tid}/membres", {"pseudo": "Abi Myteam", "role": "member"}, tok=noe)
     s, w2, _ = P(f"/api/equipes/{tid}/espaces", {"name": "Tournage"}, tok=noe)
@@ -1278,6 +1293,11 @@ def _my_team(ok, H, same) -> None:
     nt = next((x for x in me.get("teams", []) if x["id"] == "tea-perso-noe-myteam"), {})
     ok(len(nt.get("spaces", [])) == 2 and nt.get("role") == "admin",
        f"my team : dans la My Team d'un autre aussi, tous ses Workspaces ({[x['name'] for x in nt.get('spaces', [])]})")
+    own = next((x for x in me.get("teams", []) if x["id"] == "tea-perso-mia-myteam"), {})
+    ok(nt.get("label") == f"{nt.get('name')} · Noe Myteam" and own.get("label") == "My Team",
+       f"my team : le menu de l'en-tête dit à qui est la My Team d'un autre, pas la sienne ({nt.get('label')} / {own.get('label')})")
+    s, b, _ = G("/api/budget", mia, {"X-SR-Espace": nt["spaces"][0]["id"]})
+    ok(s == 200 and b.get("label") == nt.get("label"), f"my team : la pastille GPU de l'accueil aussi ({s} {b.get('label')})")
     s, d, _ = P(f"/api/equipes/{tid}/membres", {"pseudo": "Gil Myteam", "role": "guest", "guest": "viewer", "spaces": [w2["id"]]}, tok=noe)
     gil = auth.user("gil-myteam")
     ok(s == 200 and espaces.can_view(gil, w2["id"]) and not espaces.can_view(gil, t["spaces"][0]["id"]),

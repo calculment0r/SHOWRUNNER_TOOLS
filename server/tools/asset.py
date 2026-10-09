@@ -106,8 +106,8 @@ def spaces_seen() -> list[dict]:
     """Les Workspaces que la personne voit, pour MONTRER (equipes_espaces.md § 3.1) : ceux
     de ses Teams (le menu de l'en-tête : espaces.teams_of — Cal n'y a pas les My Team des
     autres, qu'il pourrait voir mais qui ne sont pas les siennes), plus le courant s'il
-    n'y est pas ; le courant en tête. Chacun : son nom, sa Team (la My Team d'un autre dit
-    à qui elle est : espaces.label_of), s'il est le courant, si l'on peut y rapatrier (et
+    n'y est pas ; le courant en tête. Chacun : son nom, sa Team (`label` : la My Team d'un
+    autre dit à qui elle est, espaces.label_of), s'il est le courant, si l'on peut y rapatrier (et
     pourquoi pas). [] : pas de personne (le socle), pas de Teams."""
     u = auth.current()
     here = library.here()
@@ -118,7 +118,7 @@ def spaces_seen() -> list[dict]:
             return
         seen.add(s["id"])
         out.append({"id": s["id"], "name": s["name"], "team": t.get("id"),
-                    "team_name": espaces.label_of(t, (u or {}).get("id")) if t.get("owner") else t.get("name"),
+                    "team_name": t.get("label") or t.get("name"),
                     "personal": bool(t.get("personal")), "archived": bool(s.get("archived")), "here": s["id"] == here,
                     "import": bool((s.get("can") or {}).get("import")), "import_why": (s.get("why") or {}).get("import"),
                     "create": bool((s.get("can") or {}).get("create")), "create_why": (s.get("why") or {}).get("create")})
