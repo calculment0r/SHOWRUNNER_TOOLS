@@ -14,7 +14,7 @@ en H3. Il y a des trucs qui traînent pour H3 déjà faits, regarde bien, il fau
 Bingeljell/image-to-3dlab, les nœuds 3D de visualbruno, rookiestar28/ComfyUI-MiniMaxH3-Studio, deux LoRA d'angles
 pour Qwen-Image 2.1 (lilylilith/QI_2.1_AnyAngle, akhaliq/Qwen-Image-2.1-Multiple-Angles-LoRA).
 
-**Statut** : étude, et un premier lot codé (§ 11, « Fait le 09/10 ») — le parcours « propose les vues, on valide, on
+**Statut** : étude, et un premier lot codé (§ 12, « Fait le 09/10 ») — le parcours « propose les vues, on valide, on
 affine » de bout en bout, sur des moteurs factices, prêt à brancher. Aucun rendu réel, aucun téléchargement (pas de GPU
 ici) : chaque essai est un protocole pour Cal (§ 9), chaque poids attend son accord.
 
@@ -176,7 +176,7 @@ compare sur le même objet sans rien recoder.
 
 ### 3.3 Valider, affiner
 
-Le parcours codé (§ 11) : chaque vue proposée est une image de la bibliothèque (dossier « Objets »), filles de l'objet
+Le parcours codé (§ 12) : chaque vue proposée est une image de la bibliothèque (dossier « Objets »), filles de l'objet
 et de la vue de départ ; **garder** en fait une référence `view` de l'élément (avec son angle) ; **refaire** propose
 une autre image (une autre graine), la gardée le reste tant qu'on n'en garde pas une autre ; **rejeter** l'écarte ;
 **rouvrir** défait l'un ou l'autre (Ctrl+Z). L'affinage s'ouvre quand chaque vue principale est décidée et qu'une au
@@ -324,7 +324,7 @@ gestes d'installation, à faire avec Cal. B plus tard, quand un générateur de 
 
 ## 7. La feuille de route
 
-1. **Fait** : le plan des vues, la boucle valider / affiner, les rendus, la planche, la classe (§ 11).
+1. **Fait** : le plan des vues, la boucle valider / affiner, les rendus, la planche, la classe (§ 12).
 2. **L'essai de Cal** (§ 9) : fal 2511 sur la voiture, puis AnyAngle ; la face du GLB calée ; « left » vérifié.
 3. **La planche « fond blanc » par construction** : chaque vue détourée (BiRefNet) avant d'être posée (D7).
 4. **Le multi-vues** : Pixal3D MV (si D2) — un graphe, un travail ; sinon la projection de texture.
@@ -564,7 +564,7 @@ pourquoi pas : `go`, `pass_open`, `gen` de la réponse du plan.
 }
 ```
 
-## 10 bis. Décisions pour Cal
+## 11. Décisions pour Cal
 
 - **D1 — le générateur des vues du premier essai** : `qwen-edit-2511` (installé) puis AnyAngle (120 Mo, après lecture de
   sa licence). Recommandation : oui aux deux, dans cet ordre (§ 9).
@@ -584,7 +584,7 @@ pourquoi pas : `go`, `pass_open`, `gen` de la réponse du plan.
 - **D8 — la face du GLB de TRELLIS.2** : la caler au premier rendu, puis en faire le défaut.
 - **D9 — le registre** : trois intentions de plus (`objet3d.vues`, `scene3d.creer`, `video.blocking`).
 
-## 11. Fait le 09/10
+## 12. Fait le 09/10
 
 **Le parcours « propose les vues, on valide, on affine »**, sans GPU, prêt à brancher (branche `wip3/objet-3d`).
 
