@@ -635,6 +635,8 @@ une **résolution** et une **taille** (pas « préréglage » ni « toile »), e
 | les messages | « rendu en file, en tête du fil : H3 démarre s'il dort » ; « réglages repris · graine vidée : « Générer » fait une variante (la graine d'origine : Avancé) » ; « passé en mode Références : les entrées s'appellent par leur jeton (@element1…) » ; « invite mise en forme par le modèle de texte : relisez, corrigez, puis « Générer » » | « rendu lancé : en haut du fil » ; « réglages repris : « Générer » fait une variante » ; « passé en mode Références » ; « prompt mis en forme : relis-le avant de lancer » |
 | ce qui manque, sous « Générer » | « ajoutez une entrée », « des jetons sans entrée » | « ajoute une référence », « un @ sans référence » (les phrases du serveur se lisent qu'elles tutoient ou vouvoient) |
 | le fil vide | « Décrivez le plan en bas, puis « Générer » : le rendu paraît ici dès l'envoi. » | « Tes vidéos s'afficheront ici. Décris le plan en bas, puis « Générer ». » |
+| le banc « Comparer » | un bandeau de raccourcis en capitales sous A et B (« ESPACE lecture ← → image … »), « déposez une vidéo sur A ou B » dans la colonne ET sur chaque place ; sous le moniteur « choisissez deux plans pour voir ce qui diffère » | les raccourcis au survol de chaque commande (le zoom et le rideau les disent aussi) ; le conseil une fois, sur les places ; rien sous le moniteur tant qu'il n'y a pas deux plans |
+| le menu ⋯ d'une vidéo | « Agrandir dans Upscale » | « Agrandir » (le nom de l'outil au lexique) |
 | le ton | « déposez », « choisissez », « votre prompt » | « dépose », « choisis », « ton prompt » |
 
 Les mots de Vidéo, tenus au lexique commun : **plan** (une vidéo, ou un plan du Multishot), **référence** (une place,

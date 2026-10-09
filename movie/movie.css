@@ -82,7 +82,8 @@
 .pc.recu b { min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; background: var(--amb-bg); box-shadow: inset 0 0 0 1px var(--line-amb); color: var(--amb); font: 500 9px/16px var(--f-mono); text-align: center; }
 /* à droite : « Générer » et son temps estimé ; ce qui manque, dessous, mène à ce qui le lève */
 .vbar .pb-gen small { min-height: 10px; }
-.vbar .pb-go .why { font-size: 10px; line-height: 1.35; }
+/* ce qui manque est une phrase (« décris le plan ») : en bas de casse, pas en capitales de machine */
+.vbar .pb-go .why { font-family: var(--f-ui); font-size: 11px; letter-spacing: 0; text-transform: none; line-height: 1.35; }
 .vbar .pb-go .why:empty { display: none; }
 .why .fix { cursor: pointer; }
 .why .fix::before { content: "→ "; }
@@ -224,8 +225,6 @@ details.accel[open] > summary::before { content: "− "; }
 .ab-slot .th { width: 60px; height: 60px; border-radius: var(--r2); background: var(--panel3) center / cover no-repeat; }
 .ab-txt { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .ab-txt .t { font-size: 12px; line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-.keys { font-family: var(--f-mono); font-size: 8.5px; letter-spacing: .12em; text-transform: uppercase; line-height: 2; color: var(--ink3); }
-.keys kbd { display: inline-block; padding: 0 5px; margin-right: 3px; border-radius: var(--r1); background: var(--panel3); color: var(--ink2); font: inherit; }
 
 /* ── le banc : moniteur à vidéos, zoom sous le curseur ───── */
 .movie .monitor { touch-action: none; }

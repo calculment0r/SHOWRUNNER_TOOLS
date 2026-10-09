@@ -52,14 +52,12 @@
     <aside class="cmp-rail" id="cmp-rail" aria-label="les deux plans">
       <div class="ab-slot a" id="slot-a"></div>
       <div class="ab-slot b" id="slot-b"></div>
-      <span class="hint">dépose une vidéo sur A ou B</span>
-      <div class="keys"><kbd>espace</kbd>lecture <kbd>←</kbd><kbd>→</kbd>image <kbd>1</kbd>…<kbd>5</kbd>modes <kbd>[</kbd><kbd>]</kbd>rideau <kbd>molette</kbd>zoom <kbd>L</kbd>boucle <kbd>S</kbd>échanger <kbd>A</kbd><kbd>B</kbd><kbd>M</kbd>écoute</div>
     </aside>
     <section class="pane" id="bench">
       <div class="monitor" id="monitor" tabindex="0" aria-label="moniteur de comparaison">
         <div class="layer a" id="layA"><div class="zs" id="zsA"><video id="vA" playsinline preload="auto"></video></div></div>
         <div class="layer b" id="layB"><div class="zs" id="zsB"><video id="vB" playsinline preload="auto"></video></div></div>
-        <div class="handle" id="handle" role="slider" aria-label="rideau" aria-valuemin="0" aria-valuemax="100" aria-valuenow="50"><span class="grip"><i></i><i></i></span></div>
+        <div class="handle" id="handle" role="slider" aria-label="rideau" title="rideau ([ et ])" aria-valuemin="0" aria-valuemax="100" aria-valuenow="50"><span class="grip"><i></i><i></i></span></div>
         <div class="tag a"><b>A</b><i class="spk" id="spkA" title="on écoute A">♪</i><span id="tagA">—</span></div>
         <div class="tag b"><b>B</b><i class="spk" id="spkB" title="on écoute B">♪</i><span id="tagB">—</span></div>
         <div class="zoombadge" id="zoomBadge" hidden></div>
@@ -82,7 +80,7 @@
         <input type="range" class="vol" id="vol" min="0" max="100" value="100" aria-label="volume" title="volume">
         <span class="sp"></span>
         <span class="lbl">Zoom</span>
-        <div class="seg" id="segZoom"><button class="tb on" data-z="1">1×</button><button class="tb" data-z="2">2×</button><button class="tb" data-z="3">3×</button></div>
+        <div class="seg" id="segZoom" title="zoom (la molette sur l’image, + et −)"><button class="tb on" data-z="1">1×</button><button class="tb" data-z="2">2×</button><button class="tb" data-z="3">3×</button></div>
         <button class="tb" id="bSwap" title="échanger A et B (S)">A ⇄ B</button>
       </div>
       <div class="timeline">

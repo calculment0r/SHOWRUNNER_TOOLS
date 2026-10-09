@@ -1095,7 +1095,7 @@ function menuFor(it) {
       { label: 'en A', onclick: () => toBench('A', it) },
       { label: 'en B', onclick: () => toBench('B', it) },
     ] },
-    { label: 'Agrandir dans Upscale', icon: '⇱', disabled: !vid, why: 'pas une vidéo', onclick: go(`upscale/?src=${id}`) },
+    { label: 'Agrandir', icon: '⇱', disabled: !vid, why: 'pas une vidéo', onclick: go(`upscale/?src=${id}`) },
     { label: 'Envoyer au Montage', icon: '▤', studio: true, onclick: go(`montage/?add=${id}`) },   // retiré sans le Studio (commun/menu.js)
     { label: 'Créer un élément', icon: '◆', disabled: true,
       why: 'extrais d’abord une image (⋯ → Extraire une image), puis crée l’élément dans Asset' },
@@ -1380,7 +1380,7 @@ function paintMetas(a, b) {   // les recettes côte à côte : ce qui diffère e
   const differs = (k) => ra && rb && k !== 'Rendu' && String(ra[k] ?? '') !== String(rb[k] ?? '');
   const dk = keys.filter(differs);
   const bare = a && b && !a.params?.mode && !b.params?.mode;
-  $('#diffline').replaceChildren(!(a && b) ? el('span', { class: 'lbl' }, 'choisis deux plans pour voir ce qui diffère')
+  $('#diffline').replaceChildren(!(a && b) ? el('span', { class: 'lbl' }, '')   // le moniteur dit déjà qu'il faut deux plans
     : bare ? el('span', {}, 'ces vidéos n’ont pas de recette (déposées, pas faites ici) : seuls l’image et le son se comparent')
     : dk.length ? el('span', {}, el('b', {}, `${dk.length} différence${dk.length > 1 ? 's' : ''}`), ' · ' + dk.join(', ').toLowerCase())
       : el('span', {}, 'mêmes réglages : seul le hasard du rendu les sépare'));
