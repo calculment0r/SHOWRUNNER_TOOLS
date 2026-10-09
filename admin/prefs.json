@@ -5,7 +5,7 @@
   "prefs": [
     {
       "key": "section", "label": "Section à l’ouverture", "type": "choice", "default": "demandes",
-      "options": [["demandes", "Demandes"], ["personnes", "Personnes"], ["teams", "Teams"], ["file", "La file"], ["machines", "Machines"],
+      "options": [["tableau", "Vue d’ensemble"], ["demandes", "Demandes"], ["personnes", "Personnes"], ["teams", "Teams"], ["file", "La file"], ["machines", "Machines"],
                   ["cablage", "Câblage"], ["stockage", "Stockage"], ["journal", "Journal"]]
     },
     {
