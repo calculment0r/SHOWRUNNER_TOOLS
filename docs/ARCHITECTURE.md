@@ -696,7 +696,8 @@ Admin → Teams.
 - **Détruire** — `POST /api/espaces/<e>/detruire {nom}` (qui gère sa Team, ou Cal ; jamais
   Général ni le dernier Workspace ouvert d'une Team) et `POST /api/equipes/<t>/detruire {nom}`
   (son propriétaire, ou Cal ; jamais une My Team ni Nirvalab : ses Workspaces, ses membres,
-  ses liens, son budget) ; `nom` : le nom tapé. Rien n'est réécrit : la fiche passe dans
+  ses liens, son budget ; ses invités qui n'attendaient Cal que pour elle sont refusés, leur
+  alerte le dit) ; `nom` : le nom tapé. Rien n'est réécrit : la fiche passe dans
   `destroyed_spaces` (`destroyed_teams`) et tout ce qui porte cet identifiant n'est plus à
   personne, Cal compris (`espaces.gone` dans les juges d'`auth`, `library.check_create`, le
   lien d'une planche) ; les objets vont à la corbeille (`library.bury`), les travaux en cours
@@ -706,12 +707,12 @@ Admin → Teams.
   sienne). Ce qu'un Workspace tient, magasin par magasin : `espaces.content_of`
   (`CONTENT_DOCS`) ; `check.py isolement` fait échouer un magasin « champ » neuf qui n'y est pas.
 - **Le grand ménage** (« fresh start », Cal) — `GET /api/admin/menage` : l'aperçu (les
-  comptes créés par une Team, les Teams partagées et leur contenu, les appartenances à
+  comptes créés par une Team — ceux qui attendent Cal compris —, les Teams partagées et leur contenu, les appartenances à
   retirer, les Teams personnelles à renommer) ; `POST {comptes, teams, retirer_membres,
   renommer, confirme: "MENAGE"}` : tout est jugé avant le premier geste, puis les Teams
-  détruites, les comptes supprimés (`admin.supprimer_compte`, le chemin d'Admin → Personnes),
-  chaque Team restante réduite à son propriétaire, les noms ; jamais Cal ni un admin. Les invités qui
-  attendent Cal (ci-dessous) n'en sont pas : Admin → Demandes les valide ou les refuse.
+  détruites, les comptes supprimés (`admin.supprimer_compte`, le chemin d'Admin → Personnes ; un
+  invité qui attend Cal : `auth.refuse`), chaque Team restante réduite à son propriétaire, les
+  noms ; jamais Cal ni un admin.
 - **Cal valide les invités** (09/10, l'étude, « Fait le 09/10 ») : un pseudo neuf mis dans une Team
   par un autre que Cal (un admin du portail compte comme Cal) — `add_member`, ou le lien d'une Team
   fait par un non-Cal — naît `pending` avec `invited {by, team, role, guest?, spaces?, at}` ; sa

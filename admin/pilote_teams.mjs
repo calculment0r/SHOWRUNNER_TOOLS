@@ -11,8 +11,9 @@
 // (Studio), sa Team personnelle encore « Chez moi » (comme avant le 09/10 : teams.json écrit à la main) ; la Team
 // « Atelier » de Cal et ses comptes créés par une Team (trois étudiants, un guest) ; la Team « Plateau » de Cal (Noé,
 // Kim, un étudiant ; Workspaces Tournage et Rushes, une image dans chacun).
-//   A  (sombre, B en clair) Cal, Admin → Teams : la carte du ménage, cochée d'avance (les comptes de l'atelier,
-//      l'Atelier, pas le Plateau mixte ; Nirvalab grisée, qui dit pourquoi) ; un seul orange ; les cartes, Détruire.
+//   A  (sombre, B en clair) Cal, Admin → Teams : la carte du ménage, cochée d'avance (les comptes de l'atelier, et
+//      Lou, que Noé a invité et qui attend Cal ; l'Atelier, pas le Plateau mixte ; Nirvalab grisée, qui dit
+//      pourquoi) ; un seul orange ; les cartes, Détruire.
 //   C  Cal détruit « Rushes » : la fenêtre, le bouton grisé tant que le nom n'est pas tapé ; puis Stockage : le
 //      Workspace détruit, « Rendre » (dans la My Team de son auteur, Cal).
 //   D  (sombre et clair) Abi (Apps) : le menu de l'en-tête (sa My Team, celle de Noé où il est membre) ; Admin →
@@ -99,6 +100,9 @@ for (const p of [noe, abi, kim]) await p.api('auth/me');   // la première requ�
 const r1 = await noe.api('equipes/tea-perso-noe-studio/membres', { method: 'POST', body: { pseudo: 'Abi Apps', role: 'member' } });
 ok(r1.s === 200, `Noé (Studio) met Abi dans sa My Team (D2) (${r1.s} ${r1.d.error || ''})`);
 await noe.api('equipes/tea-perso-noe-studio/espaces', { method: 'POST', body: { name: 'Montage' } });
+// un pseudo neuf que Noé (pas Cal) met dans sa My Team : il attend la validation de Cal (D5) — un compte du ménage aussi
+const r2 = await noe.api('equipes/tea-perso-noe-studio/membres', { method: 'POST', body: { pseudo: 'Lou Attente', role: 'member' } });
+ok(r2.s === 200 && r2.d.added?.pending, `Noé invite Lou : il attend Cal (${r2.s} ${r2.d.error || ''})`);
 // Kim, comme avant le 09/10 : sa Team personnelle s'appelle encore « Chez moi »
 const tj = JSON.parse(readFileSync(`${DATA}/teams.json`, 'utf8'));
 tj.teams['tea-perso-kim-ami'].name = 'Chez moi';
@@ -119,11 +123,13 @@ for (const theme of ['dark', 'light']) {
   await p.waitForSelector('.card.menage [data-compte]');
   const st = await p.evaluate(() => ({
     comptes: [...document.querySelectorAll('.card.menage [data-compte]')].map((x) => [x.dataset.compte, x.querySelector('input').checked]),
+    pending: [...document.querySelectorAll('.card.menage [data-compte]')].filter((x) => /attend cal/i.test(x.textContent)).map((x) => x.dataset.compte),
     teams: [...document.querySelectorAll('.card.menage [data-menage-team]')].map((x) => [x.querySelector('.nm-s').textContent, x.querySelector('input').checked, x.querySelector('input').disabled, x.title]),
     go: document.querySelector('[data-menage-go]')?.textContent, goOff: document.querySelector('[data-menage-go]')?.disabled,
     note: document.querySelector('.card.menage .adm-note:last-of-type')?.textContent }));
   say(`       ${JSON.stringify(st)}`);
-  ok(st.comptes.length === 4 && st.comptes.every(([, on]) => on), `${tag} : les quatre comptes de l'atelier, cochés d'avance`);
+  ok(st.comptes.length === 5 && st.comptes.every(([, on]) => on) && st.pending.join() === 'lou-attente',
+     `${tag} : les cinq comptes créés par une Team, cochés d'avance — Lou, qui attend Cal, compris`);
   const t = Object.fromEntries(st.teams.map(([n, on, off, why]) => [n, { on, off, why }]));
   ok(t.Atelier?.on && t.Plateau && !t.Plateau.on && t.Nirvalab?.off && /instance/.test(t.Nirvalab.why),
      `${tag} : l'Atelier coché, le Plateau (mixte) non, Nirvalab grisée qui dit pourquoi`);
@@ -234,7 +240,7 @@ for (const theme of ['dark', 'light']) {
   await p.waitForSelector('.modal input.confirm-typed');
   ok(await p.$eval('.modal .tb.go', (b) => b.disabled), 'F : MENAGE à taper d’abord');
   const txt = await p.$eval('.modal .modal-body p', (x) => x.textContent);
-  ok(/supprimer 4 comptes/.test(txt) && /détruire 1 Team/.test(txt) && /retirer/.test(txt) && /renommer 1 Team personnelle/.test(txt),
+  ok(/supprimer 5 comptes/.test(txt) && /détruire 1 Team/.test(txt) && /retirer/.test(txt) && /renommer 1 Team personnelle/.test(txt),
      `F : la fenêtre dit ce qu'il va faire (${txt.slice(0, 160)})`);
   await p.fill('.modal input.confirm-typed', 'MENAGE');
   await p.shot('F-confirme');
@@ -243,8 +249,8 @@ for (const theme of ['dark', 'light']) {
   await p.waitForTimeout(800);
   await p.locator('.card.menage').screenshot({ path: `${OUT}/F-rapport.png` });
   const users = (await c.api('admin/state')).d.users.map((u) => u.id);
-  ok(!['etu-un', 'etu-deux', 'etu-trois', 'gus-guest'].some((x) => users.includes(x)) && ['cal', 'noe-studio', 'abi-apps', 'kim-ami'].every((x) => users.includes(x)),
-     'F : les comptes de l’atelier supprimés, les autres là');
+  ok(!['etu-un', 'etu-deux', 'etu-trois', 'gus-guest', 'lou-attente'].some((x) => users.includes(x)) && ['cal', 'noe-studio', 'abi-apps', 'kim-ami'].every((x) => users.includes(x)),
+     'F : les comptes de l’atelier supprimés, Lou refusé, les autres là');
   const all = (await c.api('equipes?toutes=1')).d.teams;
   const by = Object.fromEntries(all.map((t) => [t.id, t]));
   ok(!by[atelier.id], 'F : l’Atelier détruit');

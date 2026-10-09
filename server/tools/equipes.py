@@ -293,7 +293,8 @@ def r_restore(req, sid):
 # ont fait dans leur espace ». L'aperçu est calculé sur les données réelles ; l'application refait
 # chaque jugement (un compte qui n'est pas d'atelier, une Team qui ne se détruit pas : 400, rien n'est
 # fait), puis, dans cet ordre : détruit les Teams cochées (D4 : leur contenu à la corbeille), supprime
-# les comptes cochés (le chemin d'Admin → Personnes : admin.supprimer_compte), retire de chaque Team
+# les comptes cochés (le chemin d'Admin → Personnes : admin.supprimer_compte ; un invité qui attend Cal,
+# celui de Refuser : auth.refuse), retire de chaque Team
 # restante ceux qui ne la possèdent pas, renomme les « Chez moi » d'avant. Jamais Cal ni un admin du
 # portail : ni supprimés, ni retirés. Les My Team et ce qu'elles tiennent restent.
 MENAGE_MOT = "MENAGE"
@@ -305,8 +306,9 @@ def _spared(uid: str) -> bool:
 
 
 def menage_preview(u) -> dict:
-    """(a) les comptes créés par une Team (`via: "equipe"`, auth.create_invited : l'atelier du 07/10),
-    leur date, qui les a faits, leurs Teams ; (b) les Teams partagées : propriétaire, membres,
+    """(a) les comptes créés par une Team (`via: "equipe"`, auth.create_invited : l'atelier du 07/10 ;
+    ceux qui attendent encore la validation de Cal aussi, D5 : `invited`), leur date, qui les a faits,
+    leurs Teams ; (b) les Teams partagées : propriétaire, membres,
     Workspaces, contenu ; (c) les appartenances à retirer (toute personne autre que le propriétaire,
     sauf un admin du portail) ; (d) les Teams personnelles à renommer « My Team ». `suggest` : ce que
     la page coche d'avance — les comptes ; une Team que ses membres (hors propriétaire) quittent tous
@@ -319,12 +321,19 @@ def menage_preview(u) -> dict:
                 where.setdefault(m["id"], []).append({"id": t["id"], "name": espaces.label_of(t, None), "role": m["role"]})
     comptes = []
     for x in auth.users_public():
-        if x.get("via") != "equipe" or x.get("state") == "pending" or _spared(x["id"]):
+        pending = x.get("state") == "pending"
+        # créé par une Team : ajouté par pseudo ou entré par un lien (`via`) ; un invité qui attend Cal (`invited`) —
+        # une demande tapée à la porte, sans Team, n'en est pas (Admin → Demandes)
+        if not (x.get("via") == "equipe" or (pending and x.get("invited"))) or (pending and not x.get("invited")) or _spared(x["id"]):
             continue
-        by = (auth.user(x["id"]) or {}).get("by")
-        comptes.append({"id": x["id"], "name": x["name"], "pseudo": x["pseudo"], "state": x["state"], "guest": not x.get("perso"),
-                        "created": x.get("accepted") or x.get("created"), "by": by, "by_name": auth.display_name(by),
-                        "items": 0, "teams": where.get(x["id"], [])})
+        by = (auth.user(x["id"]) or {}).get("by") or (x.get("invited") or {}).get("by")
+        # un compte en attente n'a pas encore de Team qui compte (core/espaces.py ne voit qu'un compte actif) : là où on l'a mis
+        tms = [{"id": i["team"], "name": espaces.label_of(espaces.team(i["team"]) or {"name": i["team_name"]}, None), "role": i["role"]}
+               for i in espaces.invitations_of(x["id"])] if pending \
+            else where.get(x["id"], [])
+        comptes.append({"id": x["id"], "name": x["name"], "pseudo": x["pseudo"], "state": x["state"], "pending": pending,
+                        "guest": not x.get("perso"), "created": x.get("accepted") or x.get("created"), "by": by,
+                        "by_name": auth.display_name(by), "items": 0, "teams": tms})
     cand = {c["id"] for c in comptes}
     shared = [t for t in teams if not t["personal"]]
     content = espaces.content_of({s["id"] for t in shared for s in t["spaces"]})
@@ -347,12 +356,8 @@ def menage_preview(u) -> dict:
     membres = [{"team": t["id"], "team_name": espaces.label_of(t, None), "id": m["id"], "name": m["name"], "role": m["role"]}
                for t in teams for m in t.get("members") or [] if m["id"] != t["owner"] and m["role"] != "owner" and not _spared(m["id"])]
     spared = sorted({m["name"] for t in teams for m in t.get("members") or [] if m["id"] != t["owner"] and _spared(m["id"])})
-    # les invités qui attendent Cal (D5) ne sont pas des comptes du ménage : Admin → Demandes les valide ou les refuse
-    attente = [{"id": x["id"], "name": x["name"], "by_name": auth.display_name((x.get("invited") or {}).get("by"))}
-               for x in auth.users_public() if x.get("state") == "pending" and x.get("invited")]
     return {"comptes": sorted(comptes, key=lambda c: (c["created"] or "", c["name"].lower())), "teams": rows,
-            "membres": membres, "epargnes": spared, "renommer": espaces.rename_personal(dry=True), "attente": attente,
-            "mot": MENAGE_MOT}
+            "membres": membres, "epargnes": spared, "renommer": espaces.rename_personal(dry=True), "mot": MENAGE_MOT}
 
 
 def r_menage(req):
@@ -396,12 +401,20 @@ def r_menage_apply(req):
             rep["teams"].append({"id": tid, "name": r["name"], "spaces": len(r["spaces"]), "objets": r["objets"]})
         except HttpError as e:
             rep["erreurs"].append(f"Team {rows[tid]['name']} : {e.message}")
+    names = {c["id"]: c["name"] for c in plan["comptes"]}
     for uid in comptes:
+        x = auth.user(uid)
         try:
-            r = admin.supprimer_compte(uid, u["id"])
-            rep["comptes"].append({"id": uid, "name": r["name"]})
+            if x is None:   # un invité qui n'attendait que sa Team, refusé avec elle (espaces.destroy_team, _drop_waiting)
+                rep["comptes"].append({"id": uid, "name": names[uid], "avec_team": True})
+            elif x.get("state") == "pending":   # un invité qui attend Cal : le chemin de Refuser (Admin → Demandes)
+                auth.refuse(uid, u["id"])
+                rep["comptes"].append({"id": uid, "name": names[uid], "attente": True})
+            else:
+                r = admin.supprimer_compte(uid, u["id"])
+                rep["comptes"].append({"id": uid, "name": r["name"]})
         except HttpError as e:
-            rep["erreurs"].append(f"compte {auth.display_name(uid) or uid} : {e.message}")
+            rep["erreurs"].append(f"compte {names.get(uid) or uid} : {e.message}")
     if d.get("retirer_membres"):
         rep["membres"] = espaces.strip_members(spare=_spared)
     if d.get("renommer"):
@@ -1525,6 +1538,14 @@ def _detruire(ok, H, same) -> None:
            f"détruire : le propriétaire détruit le Workspace ({s} {err(d) or d.get('destroyed')})")
         ok(library.see(img["id"]) is None and (library.trash_root() / img["id"] / "item.json").is_file()
            and (library.trash_root() / img_rex["id"]).is_dir(), "détruire : ses objets sont à la corbeille")
+        # le tableau de bord de Cal (server/tools/tableau.py) : ce qu'il tenait n'est ni listé, ni « hors des Teams »
+        # (les objets sont à la corbeille, que l'inventaire ne liste pas ; ses documents ne sont plus à personne)
+        s, tb, _ = G("/api/tableau?toutes=1")
+        s2, fd, _ = G("/api/tableau/cherche?q=Detruit&toutes=1")
+        lost = [x["id"] for x in ((tb.get("orphans") or {}).get("spaces") or [])] if isinstance(tb, dict) else []
+        ids = {x.get("id") for x in (fd.get("items") or [])} if isinstance(fd, dict) else set()
+        ok(s == 200 and s2 == 200 and w2 not in lost and not ids & {img["id"], img_rex["id"], proj.get("id"), board.get("id")},
+           f"détruire : le tableau de bord ne le montre plus, pas même hors des Teams ({lost} {sorted(ids)[:4]})")
         meta = library.trashed_meta(img["id"])
         ok(not auth.can_read_item(meta, auth.user("cal")) and not auth.can_read_item(meta, None)
            and not auth.can_write_item(meta, auth.user("cal")) and not auth.can_trash_item(meta, auth.user("cal")),
@@ -1575,6 +1596,9 @@ def _detruire(ok, H, same) -> None:
            f"détruire : Cal le rend, le même, dans la My Team de son auteur ({s} {err(d) or d})")
         here2 = {"X-SR-Espace": w2}
         s, li, _ = G("/api/library?limit=50", pia, here2)
+        s5, fd, _ = G("/api/tableau/cherche?q=Detruit&toutes=1")
+        ok(s5 == 200 and proj.get("id") in {x.get("id") for x in (fd.get("items") or [])},
+           f"détruire : rendu, le tableau de bord le retrouve ({s5})")
         s2, pj, _ = G(f"/api/music/projects/{proj.get('id')}", pia, here2)
         s3, bd, _ = G(f"/api/ideation/boards/{board.get('id')}", adm, here2)
         s4, fo, _ = G("/api/asset/view", pia, here2)
@@ -1588,6 +1612,8 @@ def _detruire(ok, H, same) -> None:
         img1 = up(pia, w1, "general")
         P(f"/api/equipes/{tid}/budget", {"gpu_s": 3600})
         s, inv, _ = P(f"/api/equipes/{tid}/invitations", {"role": "member", "hours": 24}, tok=pia)
+        P(f"/api/equipes/{tid}/membres", {"pseudo": "Ida Attente", "role": "member"}, tok=pia)   # un pseudo neuf : il attend Cal (D5)
+        ok((auth.user("ida-attente") or {}).get("state") == "pending", "détruire : un invité de Pia attend la validation de Cal")
         s, d, _ = P(f"/api/equipes/{tid}/detruire", {"nom": "Plateau Detruit"}, tok=rex)
         ok(s == 403 and "propriétaire" in err(d), f"détruire : un membre ne détruit pas la Team ({s} {err(d)})")
         s, d, _ = P(f"/api/equipes/{espaces.NIRVALAB}/detruire", {"nom": "Nirvalab"})
@@ -1595,8 +1621,10 @@ def _detruire(ok, H, same) -> None:
         s, d, _ = P(f"/api/equipes/{tid}/detruire", {"nom": "Plateau"}, tok=pia)
         ok(s == 400 and espaces.team(tid), f"détruire : la Team, son nom tapé ({s} {err(d)})")
         s, d, _ = P(f"/api/equipes/{tid}/detruire", {"nom": "Plateau Detruit"}, tok=pia)
-        ok(s == 200 and espaces.team(tid) is None and espaces.gone(w1) and d["destroyed"]["members"] == ["rex-detruit"]
+        ok(s == 200 and espaces.team(tid) is None and espaces.gone(w1) and d["destroyed"]["members"] == ["ida-attente", "rex-detruit"]
            and d["destroyed"]["invites"] >= 1, f"détruire : le propriétaire détruit la Team ({s} {err(d) or d.get('destroyed')})")
+        ok(d["destroyed"].get("waiting") == ["ida-attente"] and auth.user("ida-attente") is None and not espaces.invitations_of("ida-attente"),
+           f"détruire : l'invité qui n'attendait que cette Team est refusé avec elle ({d['destroyed'].get('waiting')})")
         ok(espaces.team_role(auth.user("rex-detruit"), tid) is None and library.see(img1["id"]) is None
            and (library.trash_root() / img1["id"]).is_dir(), "détruire : ses membres sortis, ses objets à la corbeille")
         s, d, _ = H("GET", f"/api/auth/equipe/{inv.get('token')}")
@@ -1670,8 +1698,8 @@ def _menage(ok, H, same) -> None:
     s, pv, _ = G("/api/admin/menage")
     with auth._lock:
         users = {k: dict(v) for k, v in auth._data()["users"].items()}
-    want = {k for k, x in users.items() if x.get("via") == "equipe" and x.get("state") != "pending"
-            and x.get("role") != "admin" and k != auth.admin_id()}
+    made = lambda x: bool(x.get("invited")) if x.get("state") == "pending" else x.get("via") == "equipe"   # noqa: E731
+    want = {k for k, x in users.items() if made(x) and x.get("role") != "admin" and k != auth.admin_id()}
     got = {c["id"] for c in pv.get("comptes", [])}
     ok(s == 200 and got == want and {"etu-un", "etu-deux", "etu-trois"} <= got and "kim-menage" not in got,
        f"ménage : (a) les comptes créés par une Team, exactement ({len(got)} / {len(want)})")
@@ -1696,11 +1724,13 @@ def _menage(ok, H, same) -> None:
     ok({(x["team"], x["id"]) for x in pv.get("membres", [])} == strip and (tm["id"], "adm-menage") not in strip
        and "Adm Menage" in pv.get("epargnes", []), f"ménage : (c) les appartenances à retirer, exactement, les admins épargnés ({len(strip)})")
     ok("tea-perso-kim-menage" in {x["id"] for x in pv.get("renommer", [])}, "ménage : (d) les Teams personnelles à renommer")
-    ok((auth.user("inv-menage") or {}).get("state") == "pending" and "inv-menage" in {x["id"] for x in pv.get("attente", [])}
-       and "inv-menage" not in got, f"ménage : un invité qui attend Cal n'est pas un compte du ménage, l'aperçu le dit ({pv.get('attente')})")
+    iv = next((c for c in pv.get("comptes", []) if c["id"] == "inv-menage"), {})
+    ok((auth.user("inv-menage") or {}).get("state") == "pending" and iv.get("pending") is True and iv.get("by") == "kim-menage"
+       and [x["id"] for x in iv.get("teams", [])] == ["tea-perso-kim-menage"],
+       f"ménage : un compte en attente créé par une Team en est aussi, qui l'a invité, où ({iv})")
 
     # les refus : rien n'est fait
-    base = {"comptes": ["etu-un", "etu-deux", "etu-trois"], "teams": [ta["id"]], "retirer_membres": True, "renommer": True}
+    base = {"comptes": ["etu-un", "etu-deux", "etu-trois", "inv-menage"], "teams": [ta["id"]], "retirer_membres": True, "renommer": True}
     for body, what in (({**base}, "sans confirmation"), ({**base, "confirme": "menage"}, "mal confirmé"),
                        ({**base, "comptes": ["cal"], "confirme": "MENAGE"}, "Cal"),
                        ({**base, "comptes": ["adm-menage"], "confirme": "MENAGE"}, "un admin"),
@@ -1715,17 +1745,18 @@ def _menage(ok, H, same) -> None:
     snap = {n: (root / n).read_bytes() for n in ("auth.json", "teams.json")}
     try:
         s, rep, _ = P("/api/admin/menage", {**base, "confirme": "MENAGE"})
-        ok(s == 200 and sorted(x["id"] for x in rep.get("comptes", [])) == ["etu-deux", "etu-trois", "etu-un"]
+        ok(s == 200 and sorted(x["id"] for x in rep.get("comptes", [])) == ["etu-deux", "etu-trois", "etu-un", "inv-menage"]
+           and next(x for x in rep["comptes"] if x["id"] == "inv-menage").get("attente")
            and [x["id"] for x in rep.get("teams", [])] == [ta["id"]] and not rep.get("erreurs"),
-           f"ménage : appliqué — trois comptes supprimés, une Team détruite ({s} {err(rep) or rep.get('erreurs')})")
-        ok(all(auth.user(x) is None for x in ("etu-un", "etu-deux", "etu-trois")) and espaces.team(ta["id"]) is None
+           f"ménage : appliqué — trois comptes supprimés, un invité en attente refusé, une Team détruite ({s} {err(rep) or rep.get('erreurs')})")
+        ok(all(auth.user(x) is None for x in ("etu-un", "etu-deux", "etu-trois", "inv-menage")) and espaces.team(ta["id"]) is None
            and espaces.gone(ta["spaces"][0]["id"]) and (library.trash_root() / atelier["id"]).is_dir(),
            "ménage : les comptes ne sont plus ; la Team de l'atelier détruite, son contenu à la corbeille")
         with espaces._lock:
             left = [(t["id"], m) for t in espaces._data()["teams"].values() for m, x in t["members"].items()
                     if m != t.get("owner") and m != auth.admin_id() and not auth.is_admin(auth.user(m))]
         removed = {(x["team"], x["id"]) for x in rep.get("membres", [])}
-        expect = {(t, m) for t, m in strip if t != ta["id"] and m not in ("etu-un", "etu-deux", "etu-trois")}
+        expect = {(t, m) for t, m in strip if t != ta["id"] and m not in ("etu-un", "etu-deux", "etu-trois", "inv-menage")}
         ok(not left and removed == expect, f"ménage : chaque Team ne garde que son propriétaire (et les admins) ({len(left)} restés, "
                                            f"{len(removed)} retirés / {len(expect)} attendus)")
         ok(espaces.team_role(auth.user("adm-menage"), tm["id"]) == "member" and auth.user("cal") and auth.user("adm-menage"),

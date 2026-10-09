@@ -1031,7 +1031,7 @@ function menageCard() {
     M.open && M.data ? el('button', { class: 'tb ghost sm', type: 'button', disabled: M.run || M.loading || null, onclick: () => loadMenage() }, 'Relire') : null,
     el('button', { class: 'tb ghost sm', type: 'button', 'aria-expanded': M.open ? 'true' : 'false', disabled: M.run || null,
       onclick: () => { M.open = !M.open; if (M.open && !M.data) loadMenage(); else render(true); } }, M.open ? 'Fermer' : 'Ouvrir'));
-  const lede = el('p', { class: 'adm-note' }, 'Chacun ne garde que sa My Team et ce qu’il y a fait. Les comptes créés par une Team (un atelier) sont supprimés, ',
+  const lede = el('p', { class: 'adm-note' }, 'Chacun ne garde que sa My Team et ce qu’il y a fait. Les comptes créés par une Team (un atelier) sont supprimés — ceux qui attendent ta validation, refusés —, ',
     'les Teams partagées cochées détruites (leur contenu à la corbeille), chaque Team restante ne garde que son propriétaire, les « Chez moi » d’avant deviennent My Team. ',
     'Jamais toi ni un admin.');
   if (!M.open) return el('div', { class: 'card menage' }, head2, lede);
@@ -1068,13 +1068,15 @@ function menageCard() {
   return el('div', { class: 'card menage' }, head2, lede,
     M.err ? el('p', { class: 'why' }, M.err) : null,
     // (a) les comptes créés par une Team
-    el('div', { class: 'row' }, el('span', { class: 'lbl' }, `comptes créés par une Team · ${d.comptes.length}`), el('span', { class: 'sp' }),
+    el('div', { class: 'row' }, el('span', { class: 'lbl' }, `comptes créés par une Team · ${d.comptes.length}`
+      + (d.comptes.some((c) => c.pending) ? ` · dont ${d.comptes.filter((c) => c.pending).length} en attente` : '')), el('span', { class: 'sp' }),
       el('button', { class: 'tb ghost sm', type: 'button', disabled: M.run || !d.comptes.length || null, onclick: () => { M.comptes = d.comptes.map((c) => c.id); render(true); } }, 'tous'),
       el('button', { class: 'tb ghost sm', type: 'button', disabled: M.run || !selC.size || null, onclick: () => { M.comptes = []; render(true); } }, 'aucun')),
     d.comptes.length ? el('div', { class: 'many-list', role: 'group', 'aria-label': 'les comptes à supprimer' }, ...d.comptes.map((c) => el('label', { class: 'many-row' + (selC.has(c.id) ? ' on' : ''), 'data-compte': c.id },
       box(selC.has(c.id), (e) => toggle('comptes', c.id, e.target.checked)),
       el('span', { class: 'nm-s' }, c.pseudo || c.name), c.guest ? el('span', { class: 'chip amb' }, 'guest') : null,
-      el('span', { class: 'many-meta' }, [`créé ${fmtDate(c.created)}${c.by_name ? ` par ${c.by_name}` : ''}`,
+      c.pending ? el('span', { class: 'chip amb', title: 'invité par un autre que toi : il attend ta validation (Demandes) — coché, il est refusé' }, 'attend cal') : null,
+      el('span', { class: 'many-meta' }, [`${c.pending ? 'invité' : 'créé'} ${fmtDate(c.created)}${c.by_name ? ` par ${c.by_name}` : ''}`,
         c.teams.length ? c.teams.map((t) => t.name).join(' · ') : 'dans aucune Team',
         c.items ? `${plural(c.items, 'objet ou document', 'objets et documents')} dans sa My Team (restent)` : ''].filter(Boolean).join(' · ')))))
       : el('p', { class: 'why' }, 'aucun compte créé par une Team'),
@@ -1098,9 +1100,6 @@ function menageCard() {
       el('span', { class: 'nm-s' }, 'Renommer « My Team »'),
       el('span', { class: 'many-meta', title: d.renommer.map((x) => x.owner_name).join(', ') },
         d.renommer.length ? `${plural(d.renommer.length, 'Team personnelle', 'Teams personnelles')} encore « Chez moi » : ${d.renommer.map((x) => x.owner_name).join(', ')}` : 'toutes s’appellent déjà My Team (un nom choisi reste)')),
-    (d.attente || []).length ? el('div', { class: 'row' }, el('p', { class: 'why' }, `${d.attente.map((x) => x.name).join(', ')} : invité${d.attente.length > 1 ? 's' : ''} `
-      + `qui attend${d.attente.length > 1 ? 'ent' : ''} ta validation — pas des comptes du ménage : tu ${d.attente.length > 1 ? 'les' : 'le'} valides ou refuses dans Demandes`),
-    el('button', { class: 'tb ghost sm', type: 'button', onclick: () => go('demandes') }, 'Demandes')) : null,
     M.strip && lone.length ? el('p', { class: 'why' }, `${lone.map((c) => c.pseudo || c.name).join(', ')} : entré${lone.length > 1 ? 's' : ''} comme guest, sans My Team — gardé${lone.length > 1 ? 's' : ''} et retiré${lone.length > 1 ? 's' : ''} de tout, il${lone.length > 1 ? 's' : ''} n’entre${lone.length > 1 ? 'nt' : ''} plus nulle part`) : null,
     el('div', { class: 'row' }, el('span', { class: 'lbl' }, plan.length ? 'ce qu’il va faire' : nothing), el('span', { class: 'sp' }),
       el('button', { class: 'tb go', type: 'button', 'data-menage-go': '', disabled: M.run || !plan.length || null,
@@ -1110,7 +1109,8 @@ function menageCard() {
       el('span', { class: 'lbl' }, 'le rapport'),
       ...R.teams.map((x) => el('div', { class: 'row' }, el('span', { class: 'chip ok' }, el('i'), 'détruite'), el('span', { class: 'nm-s' }, x.name),
         el('span', { class: 'bulk-why' }, `${plural(x.spaces, 'workspace', 'workspaces')} · ${plural(x.objets, 'objet', 'objets')} à la corbeille`))),
-      ...R.comptes.map((x) => el('div', { class: 'row' }, el('span', { class: 'chip ok' }, el('i'), 'supprimé'), el('span', { class: 'nm-s' }, x.name))),
+      ...R.comptes.map((x) => el('div', { class: 'row' }, el('span', { class: 'chip ok' }, el('i'), x.attente ? 'refusé' : 'supprimé'), el('span', { class: 'nm-s' }, x.name),
+        x.attente || x.avec_team ? el('span', { class: 'bulk-why' }, x.avec_team ? 'il n’attendait que sa Team, refusé avec elle' : 'il attendait ta validation') : null)),
       R.membres.length ? el('div', { class: 'row' }, el('span', { class: 'chip ok' }, el('i'), 'retirés'),
         el('span', { class: 'bulk-why' }, plural(R.membres.length, 'appartenance', 'appartenances'))) : null,
       R.renommees.length ? el('div', { class: 'row' }, el('span', { class: 'chip ok' }, el('i'), 'renommées'),

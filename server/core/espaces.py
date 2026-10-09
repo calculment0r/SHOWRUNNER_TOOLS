@@ -1563,9 +1563,31 @@ def destroy_team(u, tid: str, nom=None, *, typed: bool = True) -> dict:
         del db["teams"][tid]
         _save()
     done = _empty_into_trash(sids)
+    waiting = _drop_waiting(t["name"], members, uid)
     auth.journal("team détruite", user=uid, team=tid, name=t["name"], spaces=sids, membres=len(members), liens=revoked,
-                 objets=done["objets"], travaux=done["travaux"])
-    return {"destroyed": {"id": tid, "name": t["name"], "spaces": sids, "members": members, "invites": revoked, **done}}
+                 objets=done["objets"], travaux=done["travaux"], **({"invites_en_attente": waiting} if waiting else {}))
+    return {"destroyed": {"id": tid, "name": t["name"], "spaces": sids, "members": members, "invites": revoked,
+                          "waiting": waiting, **done}}
+
+
+def _drop_waiting(name: str, members: list[str], by: str) -> list[str]:
+    """Les invités qui attendaient Cal (D5) pour une Team détruite : leur place s'en est allée avec
+    elle ; qui n'est invité nulle part ailleurs n'a plus rien à attendre — refusé comme Cal le
+    ferait (auth.refuse : le compte, ses sessions), et l'alerte qui le nommait le dit, sans boutons
+    (core/alertes.py, clore). Rend leurs identifiants."""
+    from . import alertes
+    out = []
+    for k in members:
+        x = auth.user(k)
+        if not x or x.get("state") != "pending" or invitations_of(k):
+            continue
+        alertes.clore("compte", k, f"sa Team « {name} » a été détruite par {auth.display_name(by)}")
+        try:
+            auth.refuse(k, by)
+        except HttpError:   # tranché entre-temps (Cal, un bouton de l'alerte) : rien à faire
+            continue
+        out.append(k)
+    return out
 
 
 def _home_team(db: dict, uid: str | None) -> str | None:

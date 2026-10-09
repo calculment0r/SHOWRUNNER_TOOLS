@@ -1107,7 +1107,13 @@ retombe sur sa My Team (un onglet resté dessus reçoit `workspace_refused`), le
 d'invitation l'oublient (un lien de guest sans Workspace est retiré), sa part de budget s'efface,
 les onglets ouverts sur ses planches sont congédiés (`QUAND_DETRUIT`). Une Team : chacun de ses
 Workspaces ainsi, ses membres sortis, ses liens retirés, son budget effacé ; sa fiche reste dans
-`destroyed_teams`.
+`destroyed_teams`. Ses invités qui attendaient Cal (section suivante, D5) et ne sont invités nulle part
+ailleurs sont refusés avec elle (`_drop_waiting` → `auth.refuse` : le compte, ses sessions) ; l'alerte
+Telegram qui les nommait dit « sa Team … a été détruite » et perd ses boutons (`alertes.clore`).
+Le tableau de bord (`server/tools/tableau.py`) n'en montre rien, pas même « hors des Teams » : ses
+objets sont à la corbeille, que l'inventaire ne liste pas, et ses documents d'outil ne sont plus à
+personne (`auth.item_reader` → `gone`) ; rendu, tout y revient dans sa nouvelle My Team. « Hors des
+Teams » reste ce qu'il était : un identifiant que `teams.json` ne connaît pas du tout.
 
 L'inventaire, magasin par magasin (`STORES` de `tools/check.py` ; ce que compte
 `espaces.content_of`, `CONTENT_DOCS` — un magasin « champ » neuf qui n'y est pas fait échouer
@@ -1134,8 +1140,9 @@ casserait ces liens.
 
 **D7 · Le grand ménage** (« fresh start » ; Admin → Teams, une carte en tête, pour Cal — un
 admin du portail, comme toute la page Admin). `GET /api/admin/menage` : (a) les comptes créés
-par une Team (`via: "equipe"` : ajoutés par pseudo ou entrés par un lien), leur date, qui les a
-faits, leurs Teams, ce qu'ils ont chez eux ; (b) les Teams partagées : propriétaire, membres,
+par une Team (`via: "equipe"` : ajoutés par pseudo ou entrés par un lien ; et ceux qui attendent
+encore la validation de Cal, `invited` — « attend Cal », refusés par le chemin de Refuser,
+`auth.refuse`), leur date, qui les a faits, leurs Teams, ce qu'ils ont chez eux ; (b) les Teams partagées : propriétaire, membres,
 Workspaces, objets, octets, documents, si elles se détruisent (sinon pourquoi) ; (c) les
 appartenances à retirer (toute personne autre que le propriétaire, sauf un admin du portail :
 « épargnés ») ; (d) les Teams personnelles encore « Chez moi ». Coché d'avance : les comptes (a),
@@ -1169,8 +1176,10 @@ sombre et clair ; la My Team d'un compte Studio qui invite ; le ménage appliqu�
 - la My Team d'un compte supprimé est archivée : ceux qu'il y avait mis (D2) n'y font plus que
   lire ;
 - une Team détruite garde ses lignes dans `conso.jsonl` (l'histoire du budget) ;
-- les invités qui attendent la validation de Cal (section suivante) ne sont pas des comptes du
-  ménage : ils restent dans Admin → Demandes (la carte le dit), où Cal les valide ou les refuse.
+- détruire un seul Workspace ne refuse pas un guest en attente qui n'avait que lui : sa place de
+  guest dans la Team reste (validé, il n'entre nulle part tant qu'on ne le met pas ailleurs) ;
+- un invité en attente aussi invité dans une autre Team (une demande de la porte passée par un lien)
+  reste en attente ; son alerte nomme encore la Team détruite.
 
 ---
 
