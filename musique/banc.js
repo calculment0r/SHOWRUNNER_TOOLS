@@ -701,7 +701,7 @@ export function createBench(app, nodal) {
         const et = [b.w.toFixed(2), ...[...parF].map(([f, n]) => `${f} ${n}`), ...(sourds ? [`${sourds} sans effet`] : [])].join(' · ');
         out.push(el('div', { class: 'bn-capte', 'data-capte': id, style: { left: `${bx.x}px`, top: `${bx.y}px`, width: `${bx.w}px`, height: `${bx.h}px`, '--c': `var(--${montre.couleur})` } }));
         dessus.push(el('span', { class: 'bn-capte-et', 'data-capte': id, style: { left: `${bx.x}px`, top: `${bx.y}px`, '--c': `var(--${montre.couleur})` },
-          title: b.reglages.map((o) => `${o.label} ×${o.w.toFixed(2)}${o.entendu ? '' : o.tenu ? ' (tenu)' : ' (non branché)'}`).join(' · ') }, et));
+          title: b.reglages.map((o) => `${o.label} ×${o.w.toFixed(2)}${o.entendu ? '' : o.tenu ? ' (tenu)' : ' (sans effet)'}`).join(' · ') }, et));
       }
     }
     // la tuile choisie : un fil vers chaque attracteur qui la capte

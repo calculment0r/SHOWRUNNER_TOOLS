@@ -2405,21 +2405,23 @@ export function createNodal(app) {
       sideAttrSig = sig;
       compte.textContent = qui.length ? `${qui.length} le capte${qui.length > 1 ? 'nt' : ''}` : '';
       if (!bloc) {
-        put(boite, el('p', { class: 'nd-atr-p' }, owner.mach && t.sec ? 'aucun contrôle de cette section n\'a de facette : rien à capter' : 'rien à capter : ses réglages sont des niveaux, des choix ou une place dans le champ'));
+        // la rédaction du 09/10 : le mot de tous les jours, une phrase courte
+        put(boite, el('p', { class: 'nd-atr-p' }, owner.mach && t.sec ? 'rien à capter dans cette section : des niveaux ou des choix' : 'rien à capter : des niveaux, des choix ou une place dans le champ'));
         return;
       }
       if (!qui.length) {
         const parF = new Map();
         for (const q of bloc.parametres) parF.set(q.facette, (parF.get(q.facette) || 0) + 1);
-        put(boite, el('p', { class: 'nd-atr-p' }, `aucun attracteur ne la capte · elle offre ${[...parF].map(([f, n]) => `${f} ${n}`).join(', ')} · un segment du banc, tiré au bouton du milieu jusqu'ici, en fait naître un`));
+        put(boite, el('p', { class: 'nd-atr-p' }, `aucun attracteur ne la capte · elle offre ${[...parF].map(([f, n]) => `${f} ${n}`).join(', ')} · pour en poser un : clic milieu d'un segment du banc, tiré jusqu'ici`));
         return;
       }
       put(boite, ...qui.map((x) => el('div', { class: `nd-atr-a${x.parle ? ' parle' : ''}`, style: { '--c': `var(--${x.atr.couleur})` } },
         el('div', { class: 'nd-atr-t' }, el('i'), el('span', { class: 'nd-atr-nom' }, x.atr.nom), el('span', { class: 'sp' }),
           el('span', { class: 'lbl' }, `poids ${x.w.toFixed(2)} · ${x.parle ? 'parle' : 'muet'}`)),
-        ...x.reglages.map((o) => el('div', { class: `nd-atr-r${o.entendu ? '' : ' sourd'}`, title: o.entendu ? `${o.facette} · poids ${o.w.toFixed(2)}` : o.tenu ? 'une voie d\'automation ou un câble de valeur le tient : l\'attracteur ne le reprend pas' : 'capté, mais rien ne branche ce contrôle au moteur' },
+        // « tenu » : une automation ou un câble le tient ; « sans effet » : ce contrôle ne change pas le son (le même mot que sur la tuile cernée)
+        ...x.reglages.map((o) => el('div', { class: `nd-atr-r${o.entendu ? '' : ' sourd'}`, title: o.entendu ? `${o.facette} · poids ${o.w.toFixed(2)}` : o.tenu ? 'tenu par une automation ou un câble : l\'attracteur ne le reprend pas' : 'capté, mais ce contrôle ne change pas le son' },
           el('span', {}, o.label), el('span', { class: 'sp' }),
-          el('u', {}, o.entendu ? `${sobre(o.valeur)} → ${sobre(o.op)}${o.unite ? ` ${o.unite}` : ''}` : o.tenu ? 'tenu' : 'non branché'))))));
+          el('u', {}, o.entendu ? `${sobre(o.valeur)} → ${sobre(o.op)}${o.unite ? ` ${o.unite}` : ''}` : o.tenu ? 'tenu' : 'sans effet'))))));
     };
     sideAttr();
     return el('div', { class: 'pan nd-sel' }, el('div', { class: 'row' }, el('b', { class: 'venus' }, 'Attracteurs'), el('span', { class: 'sp' }), compte), boite);
