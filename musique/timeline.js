@@ -1951,10 +1951,26 @@ export function createTimeline(app) {
     zone.classList.toggle('on', !!p.loop.on);
   }
 
+  // Suivre la tête (Live : « Follow ») : en lecture, la vue la suit — sauf quand on défile soi-même
+  // (Maj+molette, la barre, un zoom) : elle reste où on l'a mise, et reprend dès que la tête repasse
+  // dans la vue, ou à la lecture suivante. Avant le 09/10, elle revenait à la tête à chaque image :
+  // impossible de regarder plus loin, d'y préparer un geste, pendant que le morceau joue.
+  let suiviA = null, libre = false;   // suiviA : le défilement posé par le suivi ; libre : on a défilé ailleurs
+  scroll.addEventListener('scroll', () => {
+    if (app.engine.running && suiviA !== null && Math.abs(scroll.scrollLeft - suiviA) > 1) libre = true;
+  }, { passive: true });
+  function suivreTete() {
+    if (!app.engine.running) { libre = false; suiviA = null; return; }
+    if (libre && phX >= scroll.scrollLeft && phX <= scroll.scrollLeft + scroll.clientWidth - HEAD_W - 30) libre = false;
+    if (libre) return;
+    suivre(scroll, phX, { tete: HEAD_W });
+    suiviA = scroll.scrollLeft;
+  }
+
   function frame(beat) {
     // LA tête (commun/tete.js) : sa place, cachée sous les en-têtes collés ; en lecture, la vue la suit (comme le Montage)
     phX = poser(ph, X(beat), { decal: HEAD_W, sous: scroll.scrollLeft });
-    if (app.engine.running) suivre(scroll, phX, { tete: HEAD_W });
+    suivreTete();
     for (const [id, mt] of meters) {
       const db = app.engine.level(id);
       mt.firstChild.style.transform = `scaleX(${Math.max(0, Math.min(1, (db + 60) / 66)).toFixed(3)})`;   // par transform : musique.css, .ar-mtr

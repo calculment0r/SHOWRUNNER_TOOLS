@@ -139,6 +139,36 @@ for (const theme of ['dark', 'light']) {
   ok(prise.some((c) => c[3] === 'Nouveau') && prise.some((c) => c[0] === 32 && c[1] === 16 && c[2]),
     `${theme} · la prise se pose, le refrain qu'elle recouvre reste entier et muet (${JSON.stringify(prise)})`);
 
+  // ── suivre la tête : la vue la suit, sauf quand on défile soi-même pendant la lecture ──
+  // (09/10 : elle revenait à la tête à chaque image, impossible de regarder plus loin)
+  await page.evaluate(() => { const { S, app, engine } = window.__mu; S.proj.ui.ppb = 60; app.renderView(); engine.seek(0); });
+  await page.waitForTimeout(400);
+  const sl = () => page.evaluate(() => document.querySelector('.ar-scroll').scrollLeft);
+  const bord = await page.evaluate(() => { const s = document.querySelector('.ar-scroll'); return (s.scrollLeft + s.clientWidth - 224) / 60; });
+  await page.evaluate((b) => window.__mu.engine.seek(b), Math.max(0, bord - 1.2));
+  await page.keyboard.press('Space');
+  await page.waitForTimeout(1200);
+  const s1 = await sl();
+  ok(s1 > 0, `${theme} · suivre : la tête arrive au bord droit, la vue la suit (défilement ${s1.toFixed(0)} px)`);
+  // sur la voie de la basse, dans la part visible de l'arrangement (la voie commence au temps 0, hors de la vue)
+  const voie = await page.evaluate(() => { const v = document.querySelector('.ar-scroll').getBoundingClientRect(), l = document.querySelector('.ar-lane[data-track="t2"]').getBoundingClientRect(); return { x: v.x + 224 + 300, y: l.y + 20 }; });
+  await page.mouse.move(voie.x, voie.y);
+  await page.keyboard.down('Shift');
+  for (let i = 0; i < 4; i++) await page.mouse.wheel(0, 400);
+  await page.keyboard.up('Shift');
+  await page.waitForTimeout(150);
+  const s2 = await sl();
+  await page.waitForTimeout(900);
+  const s3 = await sl();
+  ok(s2 > s1 + 800 && Math.abs(s3 - s2) < 2, `${theme} · suivre : Maj+molette pendant la lecture — la vue reste où on l'a mise (${s2.toFixed(0)} → ${s3.toFixed(0)} px)`);
+  await page.keyboard.press('Space');
+  await page.waitForTimeout(200);
+  await page.keyboard.press('Space');
+  await page.waitForTimeout(500);
+  const s4 = await sl();
+  ok(s4 < s2 - 400, `${theme} · suivre : la lecture suivante ramène la vue à la tête (${s4.toFixed(0)} px)`);
+  await page.keyboard.press('Space');
+
   // ── le piano roll : Ctrl+C, X, V copient, coupent, collent des NOTES ──
   // (09/10 : ces touches allaient à l'arrangement, Ctrl+V y collait le clip à la tête de lecture)
   await ouvrir(page, `Passe Notes ${theme}`);
