@@ -6,11 +6,13 @@
 // lui, la page n'a que cette section (#teams) ; tout compte y voit ses Teams, ses
 // Workspaces et ce qu'il peut y faire. Un lien d'invitation de Team mène ici
 // (admin/?rejoindre=<jeton>) : la porte d'abord (un pseudo), puis la Team.
+// Un pseudo neuf qu'un admin de Team (pas Cal) met dans sa Team attend Cal (D5, 09/10) :
+// il est dans les Demandes ; Cal en est alerté sur son téléphone (la carte Alertes, Telegram).
 
 //
 // L'annulation (commun/undo.js) : les réglages, les quotas, le rôle admin,
 // Apps ou Studio d'une personne (et sa demande de Studio, ouverte ou écartée), l'ordre, la priorité et l'épingle d'un travail en file, les pauses, les
-// interrupteurs de câblage — chacun avec son contraire, que le serveur juge
+// interrupteurs de câblage, couper ou rallumer les alertes — chacun avec son contraire, que le serveur juge
 // encore (un travail parti ne se replace plus : le geste tombe et le dit).
 // Ne s'annulent pas : accepter ou refuser une demande, suspendre (ses travaux
 // en file s'en vont), fermer une connexion, arrêter un travail, décharger une
@@ -23,10 +25,13 @@ import { uaShort } from '../commun/porte.js';
 import { createUndo } from '../commun/undo.js';
 import { prefs } from '../commun/prefs.js';
 import { contextMenu, pageMenu } from '../commun/menu.js';
+import { tableauInit, tableauSec, loadTableau, tableauCount } from './tableau.js';
 
 mountHeader('admin', { sub: 'la page de Cal' });
 
 const SECTIONS = [
+  // la vue d'ensemble de Cal ; pour qui n'est pas admin du portail, son tableau de bord (admin/tableau.js)
+  ['tableau', '0', 'Vue d’ensemble', 'teams · workspaces · qui crée'],
   ['demandes', 'A', 'Demandes', 'accès · studio'],
   ['personnes', 'B', 'Personnes', 'apps ou studio · teams · quotas'],
   ['teams', 'C', 'Teams', 'workspaces · membres · guests'],
@@ -50,8 +55,12 @@ contextMenu(main, (e) => e.target.closest('.qr')?._menu?.() || null);
 pageMenu(() => [{ head: 'Admin' },
   { label: 'Relire maintenant', icon: '↻', onclick: () => refresh(true) },
   { label: 'Aller à', icon: '▤', items: shown().map(([id, k, name]) => ({ label: `${k} · ${name}`, checked: S.sec === id, onclick: () => go(id) })) }]);
-// les sections qu'on voit : toutes pour un admin du portail, les Teams seulement sinon
-function shown() { return S.limited ? SECTIONS.filter(([id]) => id === 'teams') : SECTIONS; }
+// les sections qu'on voit : toutes pour un admin du portail ; sinon son tableau de bord, puis les Teams
+const LIMITED = ['tableau', 'teams'];
+function shown() {
+  return S.limited ? SECTIONS.filter(([id]) => LIMITED.includes(id)).map((x) => (x[0] === 'tableau' ? [x[0], x[1], 'Tableau de bord', 'mes teams · qui crée quoi'] : x))
+    : SECTIONS;
+}
 
 const post = (path, body) => api(path, { method: 'POST', body: body || {} });
 async function act(fn, msg) {
@@ -90,6 +99,7 @@ function nav() {
   const counts = st ? { demandes: waiting, personnes: st.users.length,
     file: st.queue.running.length + st.queue.queued.length } : {};
   if (S.teams) counts.teams = S.teams.teams.filter((t) => !t.personal || !S.teams.everyone).length;
+  if (tableauCount() != null) counts.tableau = tableauCount();
   const badge = $('#sr-admin');   // l'en-tête suit sans attendre son propre relevé
   if (badge && st) badge.textContent = waiting ? `Admin · ${waiting}` : 'Admin';
   $('#adm-nav').replaceChildren(...shown().map(([id, k, name, sub]) => el('li', {},
@@ -102,7 +112,7 @@ function nav() {
 }
 
 async function go(id) {
-  if (S.limited) id = 'teams';
+  if (S.limited && !LIMITED.includes(id)) id = 'tableau';
   S.sec = id;
   history.replaceState(null, '', location.search + '#' + id);
   render(true);
@@ -120,7 +130,10 @@ async function loadTeams() {
 async function loadSection() {
   try {
     if (S.sec === 'teams' || S.sec === 'personnes') await loadTeams();
+    if (S.sec === 'tableau') await loadTableau();
     if (S.sec === 'demandes' && S.porte === undefined) await loadPorte();
+    // les alertes : Cal seul, donc après admin/state (au premier go(), on ne sait pas encore qui l'on est)
+    if (S.sec === 'demandes' && S.state) await loadAlertes();
     if (S.sec === 'machines') S.mach = await api('admin/machines');
     if (S.sec === 'cablage') S.sw = await api('admin/switches');
     if (S.sec === 'stockage') S.store = await api('admin/storage');
@@ -144,12 +157,12 @@ async function refresh(now = false) {
     if (!S.limited) {
       try { S.state = await api('admin/state'); } catch (e) {
         if (e.status !== 403 || /réseau de Cal/.test(e.message)) throw e;
-        // pas admin du portail : la page d'administration de ses Teams
+        // pas admin du portail : son tableau de bord, et la page d'administration de ses Teams
         S.limited = true; S.state = null;
-        if (S.sec !== 'teams') { S.sec = 'teams'; history.replaceState(null, '', location.search + '#teams'); }
+        if (!LIMITED.includes(S.sec)) { S.sec = 'tableau'; history.replaceState(null, '', location.search + '#tableau'); }
       }
     }
-    if (['machines', 'journal', 'teams', 'personnes'].includes(S.sec)) await loadSection();
+    if (['machines', 'journal', 'teams', 'personnes', 'demandes', 'tableau'].includes(S.sec)) await loadSection();
     render(now);
   } catch (e) {
     if (e.status === 403) return denied(e.message);
@@ -171,12 +184,16 @@ function denied(why = '') {
 }
 
 function render(force = false) {
-  if (!S.state && !(S.limited && S.teams)) return;
+  if (!S.state && !(S.limited && (S.teams || S.sec === 'tableau'))) return;
   nav();
   if (!force && busy()) return;   // on ne repeint pas sous les doigts de Cal
-  const fn = { demandes, personnes, teams: teamsSec, file, machines: machinesSec, cablage, stockage, journal: journalSec, diag: diagSec }[S.sec];
-  main.replaceChildren(...[].concat(fn()).filter(Boolean));
+  const fn = { tableau: tableauSec, demandes, personnes, teams: teamsSec, file, machines: machinesSec, cablage, stockage, journal: journalSec, diag: diagSec }[S.sec];
+  const nodes = [].concat(fn()).filter(Boolean);
+  // une section qui rend le même nœud (le tableau : il se repeint lui-même) reste en place : son champ garde la main
+  if (nodes.length === 1 && main.childNodes.length === 1 && main.firstChild === nodes[0]) return;
+  main.replaceChildren(...nodes);
 }
+tableauInit({ head, render, go: (id) => go(id), isCal: () => !S.limited && !!S.state });
 
 // ── A · les demandes ────────────────────────────────────────
 // Ajouter quelqu'un d'avance (Cal, 29/09 : « un login simple genre su007 », puis « je veux les rentrer côté
@@ -282,21 +299,112 @@ function studioDemandes(goFirst) {
       : el('p', { class: 'lbl' }, 'aucune demande de Studio')];
 }
 
+// une demande : un pseudo tapé à l'accueil, ou un invité (D5, 09/10) — un pseudo neuf qu'un admin de Team (pas Cal)
+// a mis dans sa Team : « invité par X dans la Team Y (rôle) » ; Accepter : son compte et sa place, Refuser : les deux
+const roleDit = (t) => (t.role === 'guest' ? `guest ${t.guest || 'viewer'}${t.spaces.length ? ` · ${t.spaces.join(', ')}` : ''}` : t.role_fr);
+function demandeCard(u, go) {
+  const inv = u.invited;
+  const teams = inv ? inv.teams || [] : [];
+  const into = teams.map((t) => t.team_name).join(', ');
+  return el('div', { class: 'card amb', 'data-demande': u.id },
+    el('div', { class: 'card-head' }, el('span', { class: 'nm' }, u.name),
+      el('span', { class: 'chip amb' }, el('i'), inv ? 'invité · attend' : 'en attente')),
+    inv ? el('div', { class: 'cmeta' }, `invité ${fmtDate(inv.at || u.created)} · pseudo `, el('b', {}, u.pseudo || u.name))
+      : el('div', { class: 'cmeta' }, `demandé ${fmtDate(u.created)} · `, el('b', {}, u.ip || 'adresse inconnue'), ` · ${uaShort(u.ua)}`),
+    ...(inv ? (teams.length ? teams.map((t) => el('p', { class: 'inv-line' }, 'invité par ', el('b', {}, t.by_name || inv.by_name),
+      ' dans la Team ', el('b', {}, t.team_name), ` (${roleDit(t)})`))
+      : [el('p', { class: 'inv-line' }, 'invité par ', el('b', {}, inv.by_name), ', puis retiré de la Team : rien ne l’y attend plus'),
+        el('p', { class: 'why' }, 'accepté, il n’aurait que son compte : refuse-le plutôt')]) : []),
+    el('div', { class: 'row' },
+      el('button', { class: go ? 'tb go' : 'tb', onclick: () => act(() => post(`admin/requests/${u.id}/accept`),
+        inv && into ? `${u.name} entre dans ${into}` : `${u.name} peut entrer`) }, 'Accepter'),
+      el('button', { class: 'tb ghost', onclick: () => act(() => post(`admin/requests/${u.id}/refuse`),
+        inv ? `${u.name} refusé : son compte et sa place dans ${into || 'la Team'} sont effacés` : `demande de ${u.name} refusée`) }, 'Refuser')));
+}
+
 function demandes() {
   const r = S.state.requests;
-  return [head('Demandes d’accès', 'A', `${r.length} en attente`), inviter(),
+  return [head('Demandes d’accès', 'A', `${r.length} en attente`),
+    el('div', { class: 'grid2 wide' }, inviter(), alertesCard()),
     el('p', { class: 'adm-note' }, 'Une demande, c’est un pseudo neuf tapé à l’accueil. Accepté, il entre — la page qui attend s’ouvre seule, ',
       'et ensuite ce pseudo suffit, de n’importe quel navigateur ; refusé, la page le dit et le pseudo redevient libre. ',
-      'Un pseudo qui imite un admin (casse, accents, 0/O, 1/l/I) est refusé d’office.'),
-    r.length ? el('div', { class: 'grid2' }, ...r.map((u, i) => el('div', { class: 'card amb' },
-      el('div', { class: 'card-head' }, el('span', { class: 'nm' }, u.name), el('span', { class: 'chip amb' }, el('i'), 'en attente')),
-      el('div', { class: 'cmeta' }, `demandé ${fmtDate(u.created)} · `, el('b', {}, u.ip || 'adresse inconnue'), ` · ${uaShort(u.ua)}`),
-      el('div', { class: 'row' },
-        el('button', { class: i === 0 ? 'tb go' : 'tb', onclick: () => act(() => post(`admin/requests/${u.id}/accept`), `${u.name} peut entrer`) }, 'Accepter'),
-        el('button', { class: 'tb ghost', onclick: () => act(() => post(`admin/requests/${u.id}/refuse`), `demande de ${u.name} refusée`) }, 'Refuser')))))
+      'Un pseudo qui imite un admin (casse, accents, 0/O, 1/l/I) est refusé d’office. ',
+      'Un invité, c’est un pseudo neuf qu’un admin de Team (pas toi) a mis dans sa Team, par son pseudo ou par un lien : ',
+      'il n’entre qu’une fois accepté ici, ou d’un bouton de l’alerte Telegram ; refusé, son compte et sa place disparaissent.'),
+    r.length ? el('div', { class: 'grid2' }, ...r.map((u, i) => demandeCard(u, i === 0)))
       : el('p', { class: 'lbl' }, 'aucune demande en attente'),
     // un seul orange par écran : la première demande d'accès, sinon la première demande de Studio
     ...studioDemandes(!r.length)];
+}
+
+// ── les alertes de Cal sur son téléphone (Telegram ; core/alertes.py, server/tools/alertes.py) ──
+// L'état seulement : le jeton ne revient jamais du serveur (« posé » ou non). La marche à suivre en clair ;
+// le jeton se colle ici (écrit en 600 sur DGX2) ou se tape sur DGX2 (la commande) ; « Trouver mon chat » donne
+// un code à envoyer au bot ; « Envoyer un essai » ; « Couper » garde le jeton, « Rallumer » reprend.
+async function loadAlertes() {
+  try { S.al = await api('admin/alertes'); } catch { S.al = null; }
+}
+function alertesCard() {
+  const a = S.al;
+  const card = (...kids) => el('div', { class: 'card', 'data-alertes': '' },
+    el('div', { class: 'card-head' }, el('span', { class: 'nm' }, 'Alertes'), el('span', { class: 'chip' }, 'telegram'),
+      a ? alertesChip(a) : null), ...kids);
+  if (!a) return card(el('p', { class: 'lbl' }, 'lecture…'));
+  const kv = (k, v) => el('div', { class: 'row al-kv' }, el('span', { class: 'lbl' }, k), el('span', { class: 'al-v' }, v));
+  const d = a.dernier;
+  const tok = el('input', { class: 'fld', type: 'password', placeholder: '123456:ABC-DEF…', autocomplete: 'off', spellcheck: 'false',
+    autocapitalize: 'none', 'aria-label': 'le jeton du bot, tel que @BotFather le donne' });
+  const noTok = a.pose ? '' : 'pose d’abord le jeton du bot (étapes 1 et 2)';
+  const off = a.pose && !a.actif ? 'les alertes sont coupées : « Rallumer » d’abord' : '';
+  const why = (s) => (s ? { disabled: true, title: s } : {});
+  const ch = a.cherche;
+  return card(
+    el('p', { class: 'adm-note' }, 'Sur ton téléphone, par Telegram : un invité à valider (Valider · Refuser), une demande à la porte, ',
+      'une demande de Studio — chacune avec ses boutons, qui font ce que font ceux d’ici —, et pour info quand un admin de Team met ',
+      'quelqu’un qui a déjà un compte. Telegram plutôt que Signal : une API de bot officielle (Signal n’en a pas).'),
+    kv('bot', a.bot || (a.pose ? 'jeton posé · le nom du bot arrive' : 'pas de jeton')),
+    kv('chat', a.chat ? `trouvé · ${a.chat_nom || ''}` : 'pas encore'),
+    kv('dernier envoi', d ? `${fmtDate(d.t)} · ${d.quoi} · ${d.ok ? 'parti' : `échec : ${d.erreur || ''}`}` : 'aucun'),
+    a.attente ? kv('en attente', `${plural(a.attente, 'message a', 'messages ont')} encore des boutons`) : null,
+    !a.pose && a.why && a.why !== 'pas posé' ? el('p', { class: 'why' }, a.why) : null,
+    a.pose && a.ecoute_etat && a.ecoute_etat.ok === false ? el('p', { class: 'why' }, `l’écoute des boutons : ${a.ecoute_etat.erreur}`) : null,
+    el('ol', { class: 'al-steps' },
+      el('li', {}, 'Dans Telegram, ouvre ', el('b', {}, '@BotFather'), ', envoie ', el('code', {}, '/newbot'),
+        ', choisis un nom, puis un identifiant qui finit par « bot ». Il te donne un jeton.'),
+      el('li', {}, 'Colle ce jeton ici — il est écrit sur DGX2 (', el('code', {}, a.fichier), ', lisible par toi seul) et ne se réaffiche jamais. ',
+        'Ou tape-le sur DGX2 : la commande ci-dessous le demande sans l’afficher.'),
+      el('li', {}, '« Trouver mon chat » : envoie à ton bot le code qui s’affiche (ou touche le lien) ; ce chat devient le tien.'),
+      el('li', {}, '« Envoyer un essai » : un message arrive. C’est branché.')),
+    el('form', { class: 'row', onsubmit: (e) => {
+      e.preventDefault();
+      const v = tok.value.trim();
+      if (!v) { tok.focus(); return; }
+      tok.value = '';
+      act(async () => { S.al = await post('admin/alertes/jeton', { token: v }); }, a.pose ? 'jeton remplacé : retrouve ton chat' : 'jeton posé : maintenant, « Trouver mon chat »');
+    } }, tok, el('button', { class: 'tb', type: 'submit' }, a.pose ? 'Remplacer le jeton' : 'Poser le jeton')),
+    el('div', { class: 'cmd' }, el('code', {}, a.commande), copier(a.commande, 'commande')),
+    ch ? el('div', { class: 'sub-card', 'data-cherche': '' },
+      el('div', { class: 'row' }, el('span', { class: 'lbl' }, `envoie à ${a.bot || 'ton bot'}`), el('b', { class: 'acct-code' }, `/start ${ch.code}`),
+        el('span', { class: 'sp' }), copier(`/start ${ch.code}`, 'message')),
+      ch.lien ? el('div', { class: 'row' }, el('a', { class: 'tb ghost sm', href: ch.lien, target: '_blank', rel: 'noopener' }, 'Ouvrir le bot dans Telegram'),
+        el('span', { class: 'lbl' }, `le code vaut jusqu’à ${new Date(ch.exp * 1000).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}`)) : null,
+      el('p', { class: 'why' }, 'la carte se met à jour dès que ton bot a reçu le code')) : null,
+    el('div', { class: 'row' },
+      el('button', { class: 'tb', type: 'button', ...why(noTok || off), onclick: () => act(async () => { S.al = await post('admin/alertes/chercher'); },
+        'envoie le code à ton bot') }, a.chat ? 'Changer de chat' : 'Trouver mon chat'),
+      el('button', { class: 'tb', type: 'button', ...why(noTok || off || (a.chat ? '' : 'trouve d’abord ton chat (étape 3)')),
+        onclick: () => act(async () => { S.al = await post('admin/alertes/essai'); }, 'essai envoyé : regarde ton téléphone') }, 'Envoyer un essai'),
+      el('span', { class: 'sp' }),
+      el('button', { class: 'tb ghost', type: 'button', ...why(noTok), onclick: () => undoable(a.actif ? 'couper les alertes' : 'rallumer les alertes',
+        () => post('admin/alertes/actif', { actif: !a.actif }), () => post('admin/alertes/actif', { actif: !!a.actif }),
+        a.actif ? 'alertes coupées : le jeton reste posé' : 'alertes rallumées') }, a.pose && !a.actif ? 'Rallumer' : 'Couper')),
+    noTok || off || !a.chat ? el('p', { class: 'why' }, noTok || off || 'envoyer un essai : trouve d’abord ton chat (étape 3)') : null);
+}
+function alertesChip(a) {
+  const [k, t] = !a.pose ? (a.why && a.why !== 'pas posé' ? ['err', 'réglage refusé'] : ['no', 'à brancher'])
+    : !a.actif ? ['no', 'coupées'] : !a.chat ? ['amb', 'chat à trouver']
+      : a.ecoute_etat && a.ecoute_etat.ok === false ? ['err', 'écoute en panne'] : ['ok', 'branchées'];
+  return el('span', { class: `chip ${k}` }, el('i'), t);
 }
 
 // ── B · les personnes ───────────────────────────────────────
@@ -589,7 +697,10 @@ function memberRow(t, m) {
     })) : null;
   return el('div', { class: 'mem-row', 'data-member': m.id },
     el('div', { class: 'row' }, el('span', { class: 'nm-s' }, m.name), el('span', { class: 'lbl' }, m.pseudo !== m.name ? m.pseudo : ''),
-      m.state && m.state !== 'active' ? el('span', { class: 'chip err' }, el('i'), m.state === 'suspended' ? 'suspendu' : m.state) : null,
+      // D5 : un pseudo neuf mis par un admin de Team attend Cal ; sa place ne compte qu'une fois validé
+      m.state === 'pending' ? el('span', { class: 'chip amb', title: 'Cal valide ce compte (il en reçoit l’alerte) ; ensuite, il entre en tapant son pseudo' },
+        el('i'), 'attend Cal')
+        : m.state && m.state !== 'active' ? el('span', { class: 'chip err' }, el('i'), m.state === 'suspended' ? 'suspendu' : m.state) : null,
       el('span', { class: 'sp' }), role,
       owner ? null : el('button', { class: 'tb ghost sm', type: 'button',
         disabled: !t.manage || (m.role === 'admin' && !canAdmin) ? true : null,
@@ -609,7 +720,8 @@ function pseudoList(txt) {
   for (const s of String(txt || '').split(/[\n,;]+/)) { const v = s.trim(); if (v && !seen.has(v.toLowerCase())) seen.set(v.toLowerCase(), v); }
   return [...seen.values()];
 }
-const BULK_ST = { wait: ['no', 'en attente'], run: ['run', 'en cours'], created: ['ok', 'créé'], in: ['fam', 'déjà inscrit'], err: ['err', 'refusé'] };
+const BULK_ST = { wait: ['no', 'en attente'], run: ['run', 'en cours'], created: ['ok', 'créé'], pending: ['amb', 'attend Cal'], in: ['fam', 'déjà inscrit'],
+  err: ['err', 'refusé'] };
 
 // Coller une liste (Cal, 07/10, un workshop : « plein de login… affecte les gens à la bonne team ») : chaque pseudo
 // passe par le même chemin qu'« Ajouter », l'un après l'autre — créé déjà accepté s'il n'existe pas, sinon mis dans
@@ -622,14 +734,16 @@ async function addMany(t, f, list, guest) {
     row.st = 'run'; render(true);
     try {
       const r = await post(`equipes/${t.id}/membres`, { pseudo: row.pseudo, role: f.role, ...(guest ? { guest: f.guest, spaces: f.spaces } : {}) });
-      row.st = r.added && r.added.created ? 'created' : 'in';
+      row.st = r.added && r.added.pending ? 'pending' : r.added && r.added.created ? 'created' : 'in';
       if (r.added) row.pseudo = r.added.pseudo || r.added.name || row.pseudo;
     } catch (e) { row.st = 'err'; row.msg = e.message; }
   }
   f.bulkRun = false;
   const n = (k) => f.bulkOut.filter((x) => x.st === k).length;
   f.list = f.bulkOut.filter((x) => x.st === 'err').map((x) => x.pseudo).join('\n');
-  toast(`${t.name} : ${n('created')} créé${n('created') > 1 ? 's' : ''}, ${n('in')} déjà inscrit${n('in') > 1 ? 's' : ''}${n('err') ? `, ${n('err')} refusé${n('err') > 1 ? 's' : ''}` : ''}`, 6000);
+  const att = f.bulkOut.filter((x) => x.st === 'pending').map((x) => `« ${x.pseudo} »`);
+  toast(`${t.name} : ${n('created')} créé${n('created') > 1 ? 's' : ''}, ${n('in')} déjà inscrit${n('in') > 1 ? 's' : ''}${n('err') ? `, ${n('err')} refusé${n('err') > 1 ? 's' : ''}` : ''}`
+    + (att.length ? ` · ${att.length > 3 ? `${att.length} pseudos neufs` : att.join(', ')} ${att.length > 1 ? 'attendent' : 'attend'} la validation de Cal` : ''), 8000);
   refresh(true);
 }
 
@@ -660,7 +774,8 @@ function addForm(t) {
     f.pseudo = '';
     act(async () => {
       const r = await post(`equipes/${t.id}/membres`, { pseudo: v, role: f.role, ...(guest ? { guest: f.guest, spaces: f.spaces } : {}) });
-      toast(r.added && r.added.created ? `« ${r.added.pseudo} » créé : il entre en tapant ce pseudo` : `${r.added ? r.added.name : v} est dans ${t.name}`, 6000);
+      toast(r.added && r.added.pending ? `« ${r.added.pseudo} » attend la validation de Cal : il entrera en tapant ce pseudo une fois validé`
+        : r.added && r.added.created ? `« ${r.added.pseudo} » créé : il entre en tapant ce pseudo` : `${r.added ? r.added.name : v} est dans ${t.name}`, 6000);
     });
   } },
   el('div', { class: 'row' }, el('span', { class: 'lbl' }, f.bulk ? 'mettre une liste' : 'mettre quelqu’un'), f.bulk ? null : name,
@@ -676,7 +791,9 @@ function addForm(t) {
     x.msg ? el('span', { class: 'bulk-why' }, x.msg) : null))) : null,
   guest ? el('div', { class: 'row' }, el('span', { class: 'lbl' }, 'guest'), segOf(GM, f.guest, (v) => { f.guest = v; render(true); }, { label: 'viewer ou acteur' }),
     el('span', { class: 'lbl' }, 'dans'), wsToggles(t, f.spaces, (l) => { f.spaces = l; render(true); }, 'ses Workspaces')) : null,
-  el('p', { class: 'adm-note' }, 'Un pseudo qui n’existe pas encore est créé ici, déjà accepté : il entre en le tapant. ',
+  el('p', { class: 'adm-note' }, isCal() ? 'Un pseudo qui n’existe pas encore est créé ici, déjà accepté : il entre en le tapant. '
+    : 'Un pseudo qui n’existe pas encore est créé ici et attend la validation de Cal (il en reçoit l’alerte) ; validé, il entre en le tapant. '
+      + 'Un compte qui existe déjà entre tout de suite. ',
     'Un guest n’entre que dans les Workspaces choisis ; viewer, il voit ; acteur, il modifie ; il ne lance jamais de calcul, et n’a pas de « Chez moi ».'));
 }
 
@@ -697,7 +814,8 @@ function inviteBlock(t) {
         }, 'lien créé : il ne se montre qu’une fois') }, 'Créer le lien')),
     guest ? el('div', { class: 'row' }, el('span', { class: 'lbl' }, 'dans'), wsToggles(t, f.ispaces, (l) => { f.ispaces = l; render(true); }, 'les Workspaces du lien')) : null,
     link ? el('div', { class: 'row' }, el('span', { class: 'lbl' }, 'à envoyer'), el('b', { class: 'acct-code' }, link), el('span', { class: 'sp' }), copier(link, 'lien')) : null,
-    link ? el('p', { class: 'why' }, 'Ce lien ne se montre qu’une fois. Qui l’ouvre tape son pseudo : un pseudo neuf est accepté par le lien. ',
+    link ? el('p', { class: 'why' }, 'Ce lien ne se montre qu’une fois. Qui l’ouvre tape son pseudo : ',
+      isCal() ? 'un pseudo neuf est accepté par le lien. ' : 'un pseudo neuf attend la validation de Cal ; un compte qui existe entre tout de suite. ',
       'Sur l’adresse publique sans code d’invitation, un pseudo neuf est refusé : ajoute-le plutôt par son pseudo, ci-dessus.') : null,
     ...(t.invites || []).map((i) => el('div', { class: 'row inv-row' },
       el('span', { class: 'chip' + (i.role === 'guest' ? ' amb' : '') }, i.role === 'guest' ? `guest · ${i.guest}` : TR[i.role]),
@@ -849,7 +967,8 @@ function teamMini(t) {
 }
 
 // un lien d'invitation de Team (admin/?rejoindre=<jeton>) : la porte d'abord (un pseudo), puis la Team ;
-// une demande neuve est acceptée par le lien (qui l'a fait a vouché pour elle)
+// une demande neuve est acceptée par le lien de Cal (il a vouché pour elle) ; sur le lien d'un autre, elle attend
+// la validation de Cal (D5, 09/10) : la porte le lui dit
 async function rejoindre(tok) {
   for (let i = 0; i < 400; i++) {
     let me = null;
@@ -857,7 +976,8 @@ async function rejoindre(tok) {
     if (me && (me.state === 'active' || me.state === 'pending')) {
       try {
         const r = await api(`auth/equipe/${encodeURIComponent(tok)}`, { method: 'POST', body: {} });
-        toast(`bienvenue dans ${r.team_name} : ${r.role === 'guest' ? `guest ${r.guest}` : r.role_fr}`, 6000);
+        toast(r.pending ? `${r.by_name || 'on'} t’a invité dans ${r.team_name} : ton compte attend la validation de Cal`
+          : `bienvenue dans ${r.team_name} : ${r.role === 'guest' ? `guest ${r.guest}` : r.role_fr}`, 6000);
         setTimeout(() => location.replace(`${location.pathname}#teams`), 900);
         return;
       } catch (e) {

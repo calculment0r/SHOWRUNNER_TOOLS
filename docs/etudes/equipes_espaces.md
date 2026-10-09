@@ -2,7 +2,8 @@
 
 **Statut** : les étapes 0 à 10 sont codées — le socle (0, 3, 7) et 1, 2, 4, 5, 6, 8 le
 30/09, la phase B (9, 10, et la vérification générale) le 05/10 : voir « Fait le 30/09 » et
-« Fait le 05/10 » en fin de fichier, et ce qui reste. Le code est lu sur le PC le
+« Fait le 05/10 » en fin de fichier, et ce qui reste ; les tableaux de bord (qui a créé quoi,
+où) le 09/10 : « Fait le 09/10 ». Le code est lu sur le PC le
 30/09 (`server/core/auth.py`, `library.py`, `jobs.py`, `server/tools/core_api.py`,
 `droits.py`, `ideation_collab.py`, `music.py`, `ideation.py`) ; les données sur
 DGX2 en lecture seule (`ssh dgx2`, `~/showrunner-data`, rien modifié).
@@ -952,6 +953,226 @@ Workspaces ; rapatrier un objet), 6 (`check_doc` par `ID_FIELDS`), 8 (le budget)
 - déplacer un document (au lieu de le dupliquer) : non, par décision (§ 3.5) ; une planche
   rapatriée avec sa source n'emporte pas les LoRA de ses moodboards (entraînés dans A).
 
+## Fait le 09/10 — les tableaux de bord (branche `wip3/tableau`)
+
+La demande de Cal (09/10), ses mots : « il faut que les users aient un dashboard avec la
+possibilité de gérer les accès etc. […] par exemple, [un ami] a lancé des transcripts et je ne
+vois pas où il a créé cet asset : je dois moi avoir un dashboard qui me permette de voir toutes
+les teams, workspaces et assets créés par les gens. »
+
+**Où était la transcription de l'ami** (lu dans le code le 09/10, `server/tools/transcrire.py`,
+`lancer`) :
+- rangée sous `<data_dir>/transcrire/trn-<date>-<heure>-<hex>.json` : un document de Transcrire,
+  pas un objet de la bibliothèque — elle n'apparaît pas dans Asset (le son, oui ; un sous-titre
+  ne s'y range pas encore, la sorte `subtitle` manque au socle) ;
+- elle porte son auteur (`owner`, posé par `library.stamp` : qui l'a lancée), son Workspace
+  (`space` : celui du son, donc là où l'ami avait déposé son son — sa Team personnelle s'il y
+  travaillait) et son travail (`job`) ;
+- Cal ne la trouvait pas : Transcrire ne liste que le Workspace de l'onglet (un outil n'atteint
+  que son Workspace, `library.readable`), et Asset ne montre à Cal que ses Teams
+  (`asset.spaces_seen` : `espaces.teams_of`, sans les Teams personnelles des autres) — rien
+  n'ouvrait la Team personnelle de l'ami.
+
+**Comment Cal la retrouve maintenant** : Admin → « Vue d'ensemble » (en tête de l'Admin). L'ami
+est dans « les personnes » (combien, dans combien de Workspaces, la dernière fois, où), ou on
+tape son nom dans la recherche ; un clic : tout ce qu'il a créé, Workspace par Workspace (« Team /
+Workspace »). La transcription s'ouvre dans Transcrire, dans un nouvel onglet placé dans son
+Workspace (`transcrire/?e=<sid>#<id>`) ; son son, dans sa fiche d'Asset (`asset/?e=<sid>#<id>` :
+`?e=` ajoute ce Workspace à l'arbre d'Asset). Toutes les Teams y sont, les Teams personnelles de
+chacun comprises (« <son nom> · <la personne> »), et ce qui reste d'un Workspace qui n'existe
+plus (« Hors des Teams »).
+
+**L'inventaire : chaque outil énumère ses créations** (`server/core/inventaire.py`, contrat :
+`docs/ARCHITECTURE.md` § 11). Pourquoi pas un module qui lirait les dossiers des autres : il
+recopierait leurs formats, qui ne se ressemblent pas — l'auteur d'une planche est dans son
+fichier d'accès (`ideation_collab`), celui d'un projet d'analyse dans `auteur` (`par` n'est que
+le dernier geste), celui d'un LoRA dans ses versions ; le Workspace d'un Space de Musique est la
+clé de sa table, celui d'un LoRA celui de sa planche ; une présentation se reconnaît par la règle
+de l'export (`presentation_pdf._slides`) — et il se tromperait au premier changement. L'outil
+qui écrit le format l'énumère, dans son `register(app)` (une dizaine de lignes) ; la
+bibliothèque est déclarée par le socle. Juste par construction : `check.py isolement` exige que
+chaque magasin « champ » de `STORES` soit énuméré (`declare`) ou rattaché (`attach` : le calage
+des paroles, le journal des éléments, la corbeille), et que l'inventaire ne nomme que des
+entrées de `STORES` — un outil neuf qui range des documents sans le dire fait échouer le
+contrôle. Seule la fiche de chaque fichier est gardée en mémoire (une transcription au mot pèse
+des mégaoctets), relue s'il change. Mesuré le 09/10 (conteneur, objets factices) : 10 000 objets,
+≈ 50 à 100 ms pour la vue d'ensemble ou une recherche ; 50 000, ≈ 0,5 s ; la page la relit au
+plus toutes les 30 s.
+
+**Les magasins sans auteur** : relus un à un (`library._owned`, `library.stamp`, `store_lut`,
+`projet_creer`, les Spaces de Musique, `ideation_collab.created`), tous portaient déjà auteur et
+Workspace, sauf la version d'un LoRA (seul son travail le disait, et la file ne garde que ses 400
+derniers travaux) : elle porte désormais `by`, celui du travail (selftest). Pour l'existant, sans
+rien inventer : le travail qui l'a fait (son `owner`), sinon le premier qui a écrit sur
+l'identifiant d'après `journal.jsonl` (et sa rotation), sinon « auteur inconnu » ; chaque ligne dit
+d'où (« d'après son travail », « d'après le journal »). L'auteur d'une planche n'est écrit que
+porte allumée (`ideation_collab.created`) ; un objet d'avant la porte (29/09) n'en a pas, ni de
+journal : « auteur inconnu ».
+
+**Les routes** (`server/tools/tableau.py`) : `GET /api/tableau` (`?toutes=1` : Cal),
+`/api/tableau/espace/<sid>`, `/api/tableau/personne/<uid>`, `/api/tableau/cherche`. Les droits
+sont ceux des listes d'Asset (`auth.item_reader`) : jamais une fiche d'un Workspace où l'on
+n'entre pas ; un tel Workspace répond 404 comme un Workspace qui n'existe pas ; le tableau d'une
+autre personne : Cal seul (403) ; le pseudo d'un compte (ce qu'on tape à la porte, sans mot de
+passe) n'est montré et cherché que par Cal.
+
+**La page : pas de page de plus.** L'Admin « limité » (un compte qui n'est pas admin du portail,
+`S.limited`) avait déjà la section Teams, où l'on gère les accès (membres, rôles, invitations,
+Workspaces). Le tableau de bord de chacun est la même section que la vue d'ensemble de Cal
+(`admin/tableau.js`, `admin/tableau.css`), placée avant Teams, avec les composants de l'Admin
+(`card`, `chip`, `seg`, le rack) : une page à part aurait recopié l'en-tête, le rack et le
+passage aux accès, et séparé « qui crée quoi » de « qui a accès », que Cal demande ensemble.
+Elle n'écrit rien (pas d'orange) ; elle garde son nœud d'un relevé à l'autre (le champ de
+recherche garde la main pendant qu'on tape). Le menu du compte : « Teams et Workspaces » devient
+« Tableau de bord » (`admin/#tableau`).
+
+**Vérifié** : les selftests de `tableau` (chaque sorte créée par un membre d'essai, vue avec son
+auteur et son Workspace ; la transcription ; les droits — un membre d'une autre Team ne voit
+rien, Cal voit tout ; la recherche par personne ; l'auteur par le travail, par le journal ; un
+document réécrit puis effacé ; ce qui reste d'un Workspace disparu), `check.py isolement`, et le
+pilote `admin/pilote_tableau.mjs` (portail d'essai porte allumée, `SR_PORTE=1`) : la vue de Cal et
+le tableau d'un membre, sombre et clair, à 1280 et 390 px ; la transcription et le son d'un autre
+s'ouvrent dans leur outil, dans leur Workspace.
+
+**Reste** :
+- la fiche d'un objet dans Asset ne dit pas son auteur (« entré par » est l'outil du dépôt) ;
+  la liste d'Asset et le tableau de bord le disent ;
+- un sous-titre n'est pas un objet (la sorte `subtitle`) : Transcrire l'exporte seulement ;
+- l'en-tête des outils nomme la Team d'un autre par son seul nom quand Cal y entre (« Chez moi /
+  Perso ») ; la branche Teams v2 (09/10) le corrige (`espaces.label_of`) — même règle que
+  `tableau._View.team_name`, qui pourra l'appeler à la fusion ;
+- un Workspace détruit (Teams v2) : ce qui en reste paraît dans « Hors des Teams » tant que ses
+  objets existent ; à revoir avec sa corbeille une fois les deux branches fusionnées.
+
+---
+
+## Fait le 09/10 — Cal valide les invités, et il en est alerté (Telegram)
+
+Cal, 09/10 : « si le user invite quelqu'un je voudrais recevoir une alerte pour pouvoir valider
+l'invité… on peut faire un truc par l'app Signal ? ou Telegram ? ». Ce qui change le § 4.1 : un
+pseudo neuf n'est plus « accepté par le lien » quand le lien (ou le geste) n'est pas de Cal.
+
+### La validation (D5)
+
+- **Qui attend.** Un pseudo NEUF créé par quelqu'un d'autre que Cal (un admin du portail compte
+  comme Cal) — par son pseudo (`espaces.add_member` → `auth.create_invited(…, invited=…)`), ou en
+  ouvrant le lien d'une Team fait par un non-Cal (`espaces.redeem` → `auth.mark_invited`) — naît
+  `state: "pending"` avec `invited: {by, team, role, guest?, spaces?, at}` (et `lien` pour un lien).
+- **Sa place ne compte pas, par construction.** Elle est écrite dans `teams.json` comme les autres,
+  mais tout `core/espaces.py` ne voit qu'un compte actif (`_profile` le faisait déjà ; `team_role` et
+  `teams_of` aussi désormais) : ni profil, ni droit, ni Team dans `/api/auth/me`, ni calcul ; la
+  porte du socle le garde dehors comme toute demande (401 sur `/api/…`). Aucun filtre à ajouter outil
+  par outil : la matrice ne lui donne rien tant qu'il attend.
+- **Ce qu'il voit.** Sa porte (`commun/porte.js`) : « invitation · en attente de Cal », « X t'a
+  invité ; ton compte attend la validation de Cal » (`auth.invited_public`, dans `/api/auth/me` et
+  dans la réponse de `/api/auth/enter`). « Taper un autre pseudo » ne ferme que ce navigateur : son
+  compte n'est pas à lui de défaire (`cancel_request`), c'est à Cal.
+- **Ce que voit qui l'invite.** Le toast « « x » attend la validation de Cal » (un à un, `addForm`,
+  et la liste collée, `addMany` : « attend Cal » par ligne), la pastille « attend Cal » sur sa ligne
+  de membre, et la note du formulaire et du lien qui le disent d'avance.
+- **Un compte qui existe et qui est actif** entre directement (Cal l'a déjà accepté une fois) ; Cal
+  en est seulement informé. Ce que Cal crée (Admin, `add_member` par Cal, son lien) reste accepté
+  d'emblée.
+- **Admin → Demandes** montre l'invité à côté des demandes de la porte : « invité par X dans la
+  Team Y (rôle) » (`espaces.invitations_of`). **Accepter** (`auth.accept_request`) active le compte,
+  donc ses places — sans le Studio du compte (la Team l'a) et sans « Chez moi » s'il n'est que guest
+  partout, comme l'aurait fait le lien de Cal. **Refuser** (`auth.refuse`) retire d'abord ses places
+  (`espaces.drop_memberships` : un pseudo recréé plus tard n'en hérite jamais), puis le compte.
+- **Bornes, décidées ici** : un invité qui attend, remis dans une Team (la même ou une autre) : 409,
+  « déjà invité, attend la validation de Cal » ; 50 invités d'un même admin en attente au plus
+  (`auth.INVITES_MAX`, 429 au-delà : qu'il fasse valider d'abord).
+
+### Pourquoi Telegram plutôt que Signal (D6)
+
+| | Telegram | Signal |
+|---|---|---|
+| API de bot | officielle, documentée : « Bot API » [TG1] | aucune publiée par Signal ; signal-cli est un client tiers, « primarily intended to be used on servers to notify admins of important events » [SG1] |
+| depuis le portail | HTTPS + JSON : `POST https://api.telegram.org/bot<jeton>/<méthode>` [TG2] — `urllib` de la bibliothèque standard suffit | un démon à part (JSON-RPC ou D-Bus) [SG1] |
+| ce qu'il faut installer | rien | Java (« at least Java Runtime Environment (JRE) 25 ») et `libsignal-client`, natif, « bundled for x86_64 Linux », Windows et macOS [SG1] — nos DGX sont en aarch64 (GB10) : à fournir soi-même |
+| l'identité | un bot créé par @BotFather, un jeton | un numéro de téléphone à lui (s'inscrire « will unregister any existing client » : pas celui de Cal) [SG1] |
+| l'entretien | l'API officielle, tenue par Telegram | « signal-cli releases older than three months may not work correctly » [SG1] |
+| des boutons dans le message | `inline_keyboard`, `callback_query`, `answerCallbackQuery` [TG1] | non trouvé dans signal-cli |
+| recevoir les clics | `getUpdates` en long polling, sans adresse publique ni webhook [TG1] | le démon |
+
+Ce qu'on a lu de l'API [TG1] et qui fonde le code (`server/core/alertes.py`) :
+- `getUpdates` : « Timeout in seconds for long polling » ; « An update is considered confirmed as soon
+  as getUpdates is called with an offset higher than its update_id » (l'offset tenu sur le disque) ;
+  « This method will not work if an outgoing webhook is set up » ; deux lecteurs du même bot : 409
+  (« Error 409 means that you are running your bot several times on long polling » [TG2]).
+- un bouton : `callback_data`, « 1-64 bytes » — la nôtre fait 12 octets, `v:` ou `r:` et un
+  identifiant aléatoire tenu par le serveur, jamais le pseudo ;
+- « Telegram clients will display a progress bar until you call answerCallbackQuery. It is,
+  therefore, necessary to react by calling answerCallbackQuery » ; son texte : « 0-200 characters » ;
+- `sendMessage` : « Text of the message to be sent, 1-4096 characters » (au plus 40 personnes par
+  message) ; `editMessageText` remplace le texte et prend `reply_markup` (« An object for an inline
+  keyboard »).
+- **Non documenté, à vérifier au premier essai réel** : qu'un `editMessageText` sans `reply_markup`
+  ôte les boutons (le faux Telegram le fait ; c'est l'usage connu) ; que le lien
+  `t.me/<bot>?start=<code>` (« links like t.me/your_bot?start=XXXX that open your bot with a
+  parameter » [TG1]) arrive au bot comme « /start <code> » (la page des fonctions des bots,
+  core.telegram.org/bots/features, est fermée au conteneur) — taper « /start <code> » à la main
+  marche dans les deux cas ; la marche à suivre de @BotFather (`/newbot`, un nom, un identifiant qui
+  finit par « bot ») est celle de la même page.
+
+### Les alertes (`server/core/alertes.py`, la carte `server/tools/alertes.py`)
+
+- **Le réglage** : `~/.config/showrunner/telegram.json` (`{"token", "chat_id", "chat_nom", "actif"}`,
+  réglage `alertes.fichier`), exigé en 600 — lisible par d'autres, il est refusé et la carte dit
+  `chmod 600`, comme la clé de la porte. L'adresse : `https://api.telegram.org`, sinon `alertes.url`,
+  sinon `SR_TELEGRAM_URL` (les essais). Le jeton ne sort jamais : la carte dit « posé » ou non, une
+  erreur qui le citerait est nettoyée, le contrôle vérifie qu'il n'est dans aucune réponse ni aucun
+  fichier des données.
+- **Rien ne part d'une requête** : un événement se range dans une file (bornée à 200) ; un fil
+  « alertes-envoi » l'envoie (10 s par appel) ; un échec est journalisé « alerte non envoyée : … » et
+  noté « dernier envoi » sur la carte. Des invités d'un même admin dans une même Team, arrivés
+  ensemble (une liste collée), partent en un message (« Valider (3) »).
+- **Les événements** : invité en attente (Valider · Refuser), demande à la porte (Valider ·
+  Refuser), demande de Studio (Ouvrir le Studio · Écarter), compte existant mis dans une Team par un
+  non-Cal (pour info, sans bouton). Sans emoji.
+- **Les boutons** : un fil « alertes-ecoute », `getUpdates` en long polling (50 s), l'offset dans
+  `<data_dir>/alertes.json` ; seul le chat réglé est écouté (un autre : ignoré, journalisé) ; la
+  donnée d'un bouton nomme une décision aléatoire qui désigne des demandes précises (le compte et sa
+  date de création, une demande de Studio et sa date) et s'éteint avec elles : tranchée ailleurs
+  (Admin, l'autre message, la personne qui annule), ses messages disent le verdict et perdent leurs
+  boutons ; un clic appelle la même fonction qu'Admin (`accept_request`, `refuse`, `set_user`),
+  répond (`answerCallbackQuery` : « validé par Cal », « refusé par Cal », « déjà traité ») et
+  remplace le message. Un seul fil de chaque, même module rechargé (retrouvés par leur nom) ;
+  « Couper » l'arrête (plus rien ne part, pas même une mise à jour) ; un portail tué : rien ne se
+  perd de ce qui compte (les décisions et l'offset sont sur le disque ; une mise à jour relue après
+  coup trouve sa décision déjà prise : « déjà traité »).
+- **« Trouver mon chat »** : un code de six signes, un quart d'heure, à envoyer au bot
+  (`/start <code>`, ou le lien t.me) ; le chat qui l'envoie, en privé, devient celui de Cal. Décidé
+  ici : pas « le premier chat qui écrit au bot » — le nom d'un bot se trouve, n'importe qui peut lui
+  écrire ; le code ne se lit que dans l'Admin de Cal.
+- **La carte « Alertes »** (Admin → Demandes, Cal seul) : l'état (posé, le bot, le chat, l'écoute,
+  le dernier envoi), la marche à suivre, le champ du jeton (écrit en 600) ou la commande à taper sur
+  DGX2 (`ssh -t dgx2 'cd ~/SHOWRUNNER_TOOLS && python3 server/showrunner.py --telegram'`, le jeton
+  sans écho), « Trouver mon chat », « Envoyer un essai », « Couper » / « Rallumer » (annulable).
+- **Essayer** : `tools/faux_telegram.py` (les méthodes appelées, `getUpdates`, Cal qui écrit, Cal
+  qui clique, Telegram lent ou en panne), pris par le selftest de `server/tools/alertes.py` et par
+  `tools/portail_essai.py` (`SR_TELEGRAM_URL`, `SR_PORTE=1` pour la porte allumée) ; le pilote
+  `admin/pilote_invites.mjs` (sombre et clair). Le contrôle (`tools/check.py`) ne lit jamais le
+  réglage de Cal.
+
+### Brancher son bot (Cal, une fois)
+
+1. Telegram, sur le téléphone : ouvrir **@BotFather**, envoyer `/newbot`, un nom (« Showrunner »),
+   puis un identifiant qui finit par `bot`. Il répond par un jeton `123456789:AA…`.
+2. À la maison, **Admin → Demandes**, carte **Alertes** : coller le jeton, « Poser le jeton » (ou la
+   commande ci-dessus sur DGX2). La carte dit le nom du bot et « chat à trouver ».
+3. **« Trouver mon chat »** : envoyer à son bot le `/start <code>` affiché (ou toucher « Ouvrir le bot
+   dans Telegram »). Le bot répond « C'est noté » ; la carte passe à « branchées ».
+4. **« Envoyer un essai »** : « SHOWRUNNER · essai » arrive. Le bot ne doit servir qu'à ce portail
+   (un second lecteur : 409, la carte le dit).
+
+### Reste
+
+- Un invité retiré de sa Team par celui qui l'a invité reste dans les Demandes (« puis retiré de la
+  Team : refuse-le plutôt ») et son alerte garde ses boutons : `remove_member` n'est pas de ce lot.
+- Les parts du budget d'une Team listent aussi ses invités en attente (sans effet : ils ne calculent
+  pas).
+- Les deux points « non documenté » ci-dessus, au premier essai avec le vrai Telegram.
+
 ---
 
 ## Sources (lues le 30/09/2026)
@@ -1020,3 +1241,13 @@ Workspaces ; rapatrier un objet), 6 (`check_doc` par `ID_FIELDS`), 8 (le budget)
 - [SL1] https://slack.com/help/articles/202518103-Understand-guest-roles-in-Slack
 - [LI1] https://linear.app/docs/members-roles
 - [LI2] https://linear.app/docs/teams
+
+Ajoutées le 09/10/2026 (D6, les alertes) — core.telegram.org est fermé au conteneur ; l'API y est
+relue par deux paquets qui en recopient les descriptions et l'appellent :
+- [TG1] la Bot API, https://core.telegram.org/bots/api — relue dans `@grammyjs/types` 5.0.0 (registre
+  npm) : `methods.d.ts` (getUpdates, sendMessage, answerCallbackQuery, editMessageText), `markup.d.ts`
+  (InlineKeyboardButton, CallbackQuery)
+- [TG2] `grammy` 1.46.0 (registre npm) : `out/core/client.js` (l'adresse `${root}/bot${token}/${method}`,
+  `apiRoot` par défaut `https://api.telegram.org`), `out/core/error.js` (le 409)
+- [SG1] signal-cli, https://github.com/AsamK/signal-cli — son README (lu le 09/10 sur
+  raw.githubusercontent.com) ; aucune page de Signal ne documente d'API de bot (non trouvée)

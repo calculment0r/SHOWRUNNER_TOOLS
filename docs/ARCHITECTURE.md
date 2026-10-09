@@ -14,7 +14,7 @@ commun/                     tokens.css, base.css, shell.css, shell.js, porte.js/
                             refs.js, molette.js, fenetre.js/.html/.css, pleinecran.js, tete.js/.css,
                             lecteur.js/.css, dock.js/.css, documents.js/.css, telephone.js/.css (§ 4)
 asset/ image/ movie/ …      une page par outil : index.html + <outil>.js + <outil>.css
-admin/                      la page de Cal (§ 9)
+admin/                      la page de Cal (§ 9) ; sa vue d'ensemble, le tableau de bord de chacun (tableau.js, § 11)
 media/                      l'image et la vidéo des grandes cartes de l'accueil
 porte/                      le Worker de l'adresse publique, sa configuration, son essai (§ 8)
 ecoute/                     le lecteur du lien d'écoute (celui d'AGOSTA généralisé) : le gabarit de chaque paquet (§ 7)
@@ -518,6 +518,8 @@ par réglage de diapositive sous `ideation/diapo/`) :
   lu par parties, chaque image regardée, en sorties structurées, puis la planche
   organisée. Rien n'a tourné sur le vrai modèle : le contrôle passe par
   `tools/faux_ollama.py`.
+- la suite (09/10, étude seulement, rien n'est codé) : `docs/etudes/agent_autonome.md` — l'accusé par le code, un
+  routeur, une politique de conversation en code, des skills, le registre des capacités (`agent/`, `GET /api/agent/registre`).
 
 **ODIO, « Détecter le tempo » (05/10)** : le calcul est dans la page
 (`musique/tempo.js`, un module pur, appelé par `musique/bpm.js` sur le son que
@@ -641,14 +643,15 @@ est refusée : un tunnel pointé par erreur sur 8790 n'ouvre rien. Le contrôle 
 
 | Routes de la porte (`server/tools/compte.py`) | |
 |---|---|
-| `GET /api/auth/me` | `{auth, state: anonymous pending active refused suspended offnet, user}` |
+| `GET /api/auth/me` | `{auth, state: anonymous pending active refused suspended offnet, user}` ; un invité qui attend Cal : `invited {by_name, at}` (aussi dans la réponse d'`enter`) |
 | `POST /api/auth/enter {name}` · `/cancel` | entrer par son pseudo (un pseudo inconnu : une demande), annuler sa demande |
 | `POST /api/auth/logout` · `GET /api/auth/devices` · `POST /api/auth/devices/<id>/revoke` | se déconnecter, ses connexions |
 
 | Routes de Cal (`server/tools/admin.py`, page `admin/`) | |
 |---|---|
 | `GET /api/admin/state` | demandes, personnes (quotas, compte du jour, derniers travaux), réglages, la file entière |
-| `POST /api/admin/requests/<id>/accept` · `/refuse` | les demandes |
+| `POST /api/admin/requests/<id>/accept` · `/refuse` | les demandes : un pseudo tapé à la porte, ou un invité qui attend Cal (§ 10 ; accepter : le compte et ses places, refuser : les deux) |
+| `GET /api/admin/alertes` · `POST …/alertes/jeton {token}` · `…/chercher` · `…/essai` · `…/actif {actif}` | les alertes de Cal sur Telegram (`core/alertes.py`, `server/tools/alertes.py`) : l'état (jamais le jeton), le jeton écrit en 600 dans `~/.config/showrunner/telegram.json`, « Trouver mon chat » (un code à envoyer au bot), un essai, couper ou rallumer |
 | `POST /api/admin/users/<id> {role, state, quotas}` · `GET …/devices` · `POST …/devices/<sid>/revoke` | le rôle admin (jamais le dernier), suspendre (ses travaux en file s'en vont ; pas un admin), quotas, connexions |
 | `POST /api/admin/settings {visibility, admin_first, admin_lan_only, quotas, total_queued}` | les réglages |
 | `POST /api/admin/queue/<job> {before | to_end | priority | top}` | glisser, priorité, épingler |
@@ -656,6 +659,11 @@ est refusée : un tunnel pointé par erreur sur 8790 n'ouvre rien. Le contrôle 
 | `GET /api/admin/machines` · `POST /api/admin/instances/free {url}` · `POST /api/admin/ollama/unload` | instances, mémoire, familles chargées, ce que chacune prendrait, H3, le studio, le relais |
 | `GET · POST /api/admin/switches` | les interrupteurs déclarés (`config.declare_switch`), écrits dans `showrunner.local.json`, pris au redémarrage |
 | `GET /api/admin/storage` · `POST /api/admin/trash/empty` · `GET /api/admin/journal` | stockage, corbeille, journal |
+
+La page a en tête la section **« 0 · Vue d'ensemble »** (09/10, `admin/tableau.js`, § 11) : toutes les Teams,
+leurs Workspaces, qui y crée quoi. Un compte qui n'est pas admin du portail n'a que deux sections : son
+**« Tableau de bord »** (ses Teams), puis **Teams** (les accès : membres, rôles, invitations, Workspaces) ;
+l'entrée « Tableau de bord » du menu du compte (`commun/shell.js`) mène à `admin/#tableau`.
 
 Essayer la file sans rien calculer : `tools/faux_comfy.py` (un faux
 ComfyUI réglable : mémoire, rendu d'un « autre »), `"file_simulation": true`
@@ -674,6 +682,16 @@ Admin → Teams.
   (un guest est `viewer` ou `acteur`, réglé dans Admin → Personnes). Un Workspace
   (`esp-…`) est un lieu de travail d'une Team : un rôle par défaut, des rôles par membre
   (`admin | editor | commenter | viewer`). Chaque compte a « Chez moi » / « Perso ».
+- **Cal valide les invités** (09/10, l'étude, « Fait le 09/10 ») : un pseudo neuf mis dans une Team
+  par un autre que Cal (un admin du portail compte comme Cal) — `add_member`, ou le lien d'une Team
+  fait par un non-Cal — naît `pending` avec `invited {by, team, role, guest?, spaces?, at}` ; sa
+  place est écrite, mais `core/espaces.py` ne voit qu'un compte actif (`_profile`, `team_role`,
+  `teams_of`, `can_manage`) : rien ne compte tant qu'il attend. Admin → Demandes l'accepte
+  (`auth.accept_request`) ou le refuse (`auth.refuse` : ses places d'abord, `drop_memberships`). Un
+  compte actif entre directement. Chaque demande (invité, porte, Studio) et chaque compte existant
+  mis dans une Team par un non-Cal est annoncé à Cal sur Telegram (`core/alertes.py` : une file et
+  un fil, jamais dans la requête ; les boutons par `getUpdates`, du seul chat réglé, appellent les
+  mêmes fonctions qu'Admin) ; essais : `tools/faux_telegram.py`, `SR_TELEGRAM_URL`.
 - **La matrice** (`espaces.MATRIX`, profils × actions) est la seule vérité :
   `espaces.judge(u, espace, action)` rend (oui, pourquoi pas) ; `auth.can_view`,
   `can_edit`, `can_compute`, `can_publish`… la reprennent. Un guest ne calcule jamais,
@@ -722,6 +740,69 @@ Admin → Teams.
   (Idéation : la planche), ce qui liste pour l'onglet passe `espace: espace()` ; `ici()` :
   là où l'outil travaille, où un objet d'ailleurs posé est rapatrié.
 - **Les contrôles** : `check.py garde` (chaque sorte, pour chaque profil de la matrice ;
-  la route de chaque outil rejouée par un guest), `check.py isolement` (l'inventaire ; un
-  membre d'une autre Team rejoue chaque lecture des selftests et n'y voit rien d'ailleurs),
-  `droits.py`, `asset.py` (rapatrier).
+  la route de chaque outil rejouée par un guest), `check.py isolement` (l'inventaire ; chaque
+  magasin à documents est dans l'inventaire de qui a créé quoi, § 11 ; un membre d'une autre
+  Team rejoue chaque lecture des selftests et n'y voit rien d'ailleurs), `droits.py`,
+  `asset.py` (rapatrier), `tableau.py` (§ 11).
+
+## 11. Qui a créé quoi, où
+
+Cal, 09/10 : un ami avait lancé des transcriptions, et Cal ne voyait pas où — « je dois moi avoir
+un dashboard qui me permette de voir toutes les teams, workspaces et assets créés par les gens ».
+Le contrat : **chaque création porte son auteur et son Workspace, posés par le serveur, et son
+outil l'énumère** pour l'inventaire (`server/core/inventaire.py`), que lisent les tableaux de bord
+(`server/tools/tableau.py`, Admin → « Vue d'ensemble » ; « Tableau de bord » pour chacun).
+
+- **Déclarer** (dans `register(app)` de l'outil, qui seul connaît son format ; l'inventaire ne lit
+  le dossier d'aucun outil) : `inventaire.declare(sorte, label=, plural=, tool=, store=, lister=)`.
+  `lister()` rend une fiche par création : `id`, `title`, `owner` (l'auteur tel que le document le
+  porte), `job` (le travail qui l'a fait, s'il le dit), `space`, `created`, `updated`, `open`
+  (l'adresse dans son outil, relative à la racine, sans `?e=` : l'inventaire le pose, `with_e`),
+  `sub`, `thumb` (une adresse, ou une fonction : calculée pour la page montrée seulement). Les
+  fichiers se lisent par `inventaire.json_docs(chemins, fiche)` : seule la fiche de chaque fichier est
+  gardée en mémoire, jamais le document, et un fichier n'est relu que s'il a changé ; ce qui dépend d'un
+  autre document (l'auteur d'une planche, le titre d'une image source) se lit à chaque relevé.
+- **Rattacher** un magasin à documents qui n'est pas une création en soi : `inventaire.attach(store,
+  pourquoi)`. `check.py isolement` échoue si un magasin « champ » de `STORES` n'est ni l'un ni l'autre.
+- **L'auteur d'un document qui ne le porte pas** (un objet d'avant la porte, une planche d'avant le
+  30/09, une LUT importée en ligne de commande) : le travail qui l'a fait (son `owner`, la file garde
+  les 400 derniers), sinon le premier qui l'a écrit d'après `journal.jsonl` (et `journal.1.jsonl`),
+  sinon « auteur inconnu » ; chaque fiche dit d'où (`via` : `doc` | `travail` | `journal` | null).
+- **Les droits** : une fiche n'est rendue qu'à qui la verrait dans une liste d'Asset
+  (`auth.item_reader` : le rôle dans son Workspace) — jamais celle d'un Workspace où l'on n'entre
+  pas ; Cal entre partout, en lecture. Le pseudo d'un compte (ce qu'on tape à la porte) n'est montré
+  et cherché que par Cal ; les autres voient et cherchent le nom. La Team personnelle d'un autre se
+  nomme « <son nom> · <la personne> ».
+
+| sorte (`kind`) | magasin, sous `<data_dir>` | outil | auteur | Workspace | titre · dates | s'ouvre (`open`, puis `?e=<sid>`) |
+|---|---|---|---|---|---|---|
+| `image` `video` `audio` `midi` `document` `element` `sequence` `playlist` | `library/<id>/item.json` (une version d'élément reste sous son élément, comme dans Asset) | le socle (Asset) ; ce qui l'a fait : `origin.tool` | `origin.user` (`library._owned` : la personne de la requête ou du travail) ; sinon `origin.job` | `space` (`library.new_space`) | `title` · `created`, `updated` | `asset/#<id>` ; une séquence `montage/#<id>` ; une playlist `chanson/?playlist=<id>` |
+| `planche` | `ideation/ide-*.json` | Idéation | `ideation_collab/<id>.access.json` → `owner` (`ideation_collab.created` ; porte allumée seulement) | `space` (`ideation._write`) | `name` · `created`, `updated` | `ideation/#<id>` |
+| `odio` | `musique/mus-*.json` | ODIO | `owner` (`library.stamp`) | `space` | `name` · `created`, `updated` | `musique/?p=<id>` |
+| `transcription` | `transcrire/trn-*.json` (pas `*.voix.json`, le spectre des voix) | Transcrire | `owner` (`library.stamp` : qui l'a lancée) ; `job` | `space` : celui du son | `title` (celui du son) · `created`, `updated` | `transcrire/#<id>` |
+| `lut` | `luts/lut-*.json` (et son `.cube`) | Montage | `owner` (`store_lut`) | `space` | `title` · `created` | `montage/` (l'étagère des LUT) |
+| `atelier` | `image_atelier/atl-*.json` | Image (l'atelier) | `owner` (`library.stamp` : qui l'a ouverte) | `space` : celui de l'image source | « Atelier · » et le titre de la source · `created`, `updated` | `image/atelier/?s=<id>` |
+| `analyse` | `analyse/projets.json` → `projets[]` créés ici (ni `depot`, ni `supprime`) | Movie Analysis | `auteur` (`par` n'est que le dernier geste) | `space` | `nom` · `cree`, `maj` | `analyse/?projet=<id>` |
+| `space` | `chanson/spaces.json` → `{<esp>: {<msp>: fiche}}` (sans `deleted`) | Musique (l'app) | `owner` | la clé de sa table | `name` · `created` | `chanson/` |
+| `lora` | `lora/<planche>-<objet>.json` (une version, un plan ou un travail) | Idéation (un moodboard) | `versions[0].by` (09/10), sinon `versions[0].job`, sinon `plan.owner` | celui de sa planche (`ideation.board_space`) | `name` · `versions[0].at`, `versions[-1].at` | `ideation/#<planche>` |
+
+Rattachés : `paroles/` (l'état du calage des paroles d'un son ; les paroles sont dans le son, `lrc`),
+`elements/journal.jsonl` (des gestes : publier, retirer), `trash/` (la corbeille d'Asset). Ni
+créations ni documents (`STORES` dit d'où vient leur Workspace) : le Projet du Montage
+(`montage/projet/<esp>.json`, il nomme des objets), les dossiers d'Asset, les liens d'écoute (ceux
+d'une playlist), l'accès et le fil d'une planche, la conversation de l'agent, les dépouillements de
+Movie Analysis (ceux de leur projet), les corbeilles des outils (`*/corbeille/`). Ce qui se range
+ailleurs que là où on l'attendrait : une **présentation** est une planche qui a des diapositives (ses
+exports PDF, PNG, MP4 sont des objets, outil `ideation`) ; le **carnet** est dans sa transcription
+(`notes`, `qa`) ; une **chanson** de l'app Musique est un son (`origin.tool = chanson`) ; un
+**personnage** de Character Factory n'est ici qu'importé (un élément, `element.source.tool =
+character-factory` ; les autres vivent dans le studio, sur DGX1) ; un **objet** d'Object Creator est
+un élément `type: object` (ses GLB dans `element.meshes`) ; un **sous-titre** n'est pas encore un
+objet (la sorte `subtitle` manque : Transcrire l'exporte).
+
+| Routes (`server/tools/tableau.py`) | |
+|---|---|
+| `GET /api/tableau[?toutes=1]` | les Teams que la personne voit (Cal, `toutes` : toutes, les Teams personnelles de chacun comprises, et `orphans` : ce qui reste d'un Workspace qui n'existe plus) → par Team, par Workspace : `total`, `counts` (par sorte), `authors` (par auteur), `last` (la dernière activité) ; `people` (qui a créé combien, où, quand pour la dernière fois) ; `kinds` |
+| `GET /api/tableau/espace/<sid>?kind=a,b&q=&author=&limit=&offset=` | les objets d'un Workspace, du plus récent : sorte, titre, auteur (`via`), dates, `open` (avec `?e=<sid>`), vignette ; 404 d'un Workspace qu'on ne voit pas, comme d'un Workspace qui n'existe pas |
+| `GET /api/tableau/personne/<uid>?kind=&limit=&offset=` | tout ce que cette personne a créé, partout, avec son Workspace et sa Team (`spaces` : où, combien, quand) — Cal, ou soi-même (403) ; `inconnu` : ce dont on ne sait pas l'auteur |
+| `GET /api/tableau/cherche?q=&toutes=1` | les personnes (le nom ; Cal : aussi le pseudo, l'identifiant) et les objets (titre, nom de l'auteur) qui répondent à `q`, sans casse ni accents ; Cal (`toutes`) : tous les comptes, même ceux qui n'ont rien créé |

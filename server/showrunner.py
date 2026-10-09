@@ -28,6 +28,8 @@ seconde écoute). La porte n'écoute jamais ailleurs que sur le loopback.
     python3 server/showrunner.py --porte-url <https://….trycloudflare.com | "">   # l'adresse du tunnel
     python3 server/showrunner.py --porte-lien             # mode, adresse, lien d'invitation, code admin
     python3 server/showrunner.py --ami su007              # un pseudo d'ami créé d'avance, déjà accepté
+    python3 server/showrunner.py --telegram               # le jeton du bot des alertes de Cal, tapé sans écho
+                                                          # (ssh -t dgx2 '…' : il faut un terminal ; core/alertes.py)
 """
 
 from __future__ import annotations
@@ -137,6 +139,18 @@ def main() -> None:
         lien = auth.invite_links().get("lien") or ""
         print(f"« {u['pseudo']} » est un ami, déjà accepté (id {u['id']}) : il entre en tapant ce pseudo"
               + (f", après le lien d'invitation {lien}" if lien else "") + ". Le portail en marche le relit seul.")
+        return
+    if "--telegram" in sys.argv:
+        import getpass
+
+        from core import alertes
+        tok = getpass.getpass("le jeton de ton bot (donné par @BotFather ; il ne s'affiche pas) : ")
+        try:
+            where = alertes.poser_jeton(tok, by=f"{auth.admin_id()} (ligne de commande)")
+        except auth.HttpError as e:
+            sys.exit(f"--telegram : {e.message}")
+        print(f"jeton posé dans {where} (lisible par toi seul). Ensuite : Admin → Demandes → Alertes, "
+              f"« Trouver mon chat ». Le portail en marche le relit seul.")
         return
     if "--porte-lien" in sys.argv:
         for k, v in auth.invite_links().items():
