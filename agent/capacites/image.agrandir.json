@@ -1,0 +1,52 @@
+{
+ "id": "image.agrandir",
+ "label": "Agrandir une image · Upscale",
+ "intentions": [
+  "image.modifier"
+ ],
+ "outil": "upscale",
+ "travail": "upscale.image",
+ "route": "POST /api/upscale/run",
+ "entrees": {
+  "image": {
+   "sorte": "image",
+   "requis": true,
+   "question": {
+    "texte": "Quelle image ?"
+   }
+  }
+ },
+ "sortie": {
+  "sorte": "image",
+  "parents": [
+   "image"
+  ]
+ },
+ "criteres": [
+  {
+   "si": "image_citee",
+   "poids": 1,
+   "pourquoi": "SeedVR2, RealESRGAN : sans rien inventer"
+  }
+ ],
+ "limites": [],
+ "etat": {
+  "exige": {
+   "interrupteur": "upscale_backend=comfyui"
+  }
+ },
+ "cout": {
+  "classe": "gpu",
+  "estimation": "durations.json"
+ },
+ "consentement": "rendu",
+ "licence": {
+  "nom": "non relevée dans le dépôt",
+  "lue": false
+ },
+ "sources": [
+  "docs/etudes/upscale.md"
+ ],
+ "rempli_par": "agent_autonome.md",
+ "verifie": "2026-10-09"
+}

@@ -1,0 +1,58 @@
+{
+ "id": "image.generer.zimage",
+ "label": "Une image · Z-Image",
+ "intentions": [
+  "image.creer"
+ ],
+ "outil": "image",
+ "travail": "image.generate",
+ "route": "POST /api/image/generate",
+ "entrees": {
+  "texte": {
+   "type": "texte",
+   "requis": true
+  }
+ },
+ "sortie": {
+  "sorte": "image"
+ },
+ "criteres": [
+  {
+   "si": "sans_reference",
+   "poids": 2,
+   "pourquoi": "le plus rapide : une photo nette tirée du texte seul"
+  },
+  {
+   "si": "references",
+   "exclut": true,
+   "pourquoi": "il ne prend pas de référence"
+  }
+ ],
+ "limites": [
+  "texte seul"
+ ],
+ "etat": {
+  "exige": {
+   "interrupteur": "image_backend=comfyui",
+   "image": "zimage:turbo"
+  }
+ },
+ "cout": {
+  "classe": "gpu",
+  "famille": "zimage",
+  "estimation": "durations.json"
+ },
+ "consentement": "rendu",
+ "licence": {
+  "nom": "Apache-2.0",
+  "lue": true,
+  "commercial": "oui",
+  "source": "docs/etudes/image.md"
+ },
+ "sources": [
+  "docs/etudes/image.md",
+  "server/tools/image.py (MODELS)"
+ ],
+ "rempli_par": "agent_autonome.md",
+ "verifie": "2026-10-09"
+}

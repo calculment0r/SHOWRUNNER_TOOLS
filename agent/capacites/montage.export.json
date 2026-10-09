@@ -1,0 +1,35 @@
+{
+ "id": "montage.export",
+ "label": "Exporter une séquence · Montage",
+ "intentions": [
+  "montage.premier_jet"
+ ],
+ "outil": "montage",
+ "travail": "montage.export",
+ "route": null,
+ "entrees": {},
+ "sortie": {
+  "sorte": "video"
+ },
+ "criteres": [],
+ "limites": [
+  "une séquence du Montage, en MP4 (ffmpeg)"
+ ],
+ "etat": {
+  "exige": {}
+ },
+ "cout": {
+  "classe": "cpu"
+ },
+ "consentement": "aucun",
+ "licence": {
+  "nom": "le code du portail",
+  "lue": true
+ },
+ "sources": [
+  "docs/etudes/montage.md",
+  "server/tools/montage.py"
+ ],
+ "rempli_par": "agent_autonome.md",
+ "verifie": "2026-10-09"
+}
