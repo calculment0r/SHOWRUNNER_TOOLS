@@ -318,6 +318,12 @@ d'avant (`git archive 99595ec`, servie sur le même port).
 | entendus pendant, rendus après | 31 | 293 |
 | hors attracteurs, dit | — | 60 (niveaux, pano, arc, routage ; contrôles branchés à un niveau) |
 
+Après la fusion des deux lots voisins du 09/10 (le Résonateur et Physique,
+qui déclarent leurs sortes ; le MINILOGUE XD sur le Synthé, la MICROFREAK, le
+FM-6 et le STRINGS-4 sur Macro) : 390 réglages continus, 326 captés, entendus
+pendant et rendus après — Résonateur 6 (8), Physique 16 (17), Macro 15 (16),
+MINILOGUE XD 11 (12) ; le selftest : POLY-6 14, FM-6 3, STRINGS-4 4.
+
 Par sorte de module, entendus avant → après (sur n continus) : DR-9 0 → 17
 (26), Synthé 6 → 25 (26), Échantillonneur 1 → 4 (5), Lecteur 0 → 0 (1,
 son volume) ; boîte à rythme 1 → 35 (47), Analog 4 → 10 (11), Basse acide
@@ -496,9 +502,13 @@ le goût est à Cal.
   au swing) : le moteur n'a pas leur réglage (hauteur du VCO 1, modulation
   croisée, forme, drive et intensité du minilogue, montée de la coupure de
   la MicroFreak, fill et scatter de la TR-8S).
-- **FM-6** (table de branchement vide), **STRINGS-4** (son volume seul), la
-  **table de mix** (ses tranches se règlent par `pousserTranche`, elle n'est
-  pas au catalogue, § 1 n° 44) : rien n'y est capté.
+- La **table de mix** (ses tranches se règlent par `pousserTranche`, elle
+  n'est pas au catalogue, § 1 n° 44) : rien n'y est capté. (Le FM-6 et le
+  STRINGS-4, qui n'avaient rien de branché, en ont depuis le lot « odio-moteurs ».)
+- **Le Résonateur et Physique** (lot « odio-moteurs ») reçoivent l'instant
+  (`setParameter(id, valeur, temps)`) mais leur AudioWorklet, qui rend d'avance
+  dans une file, ne le date pas encore : le modèle est dans `plaits/macro.js`
+  (`dates`).
 - **La précision** : ce qu'un module natif ne tient pas par un AudioParam
   (la durée de la réverbération, qui recalcule sa réponse ; le drive de la
   distorsion ; un type de filtre) prend la copie quand la tranche se

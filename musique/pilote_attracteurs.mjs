@@ -7,7 +7,7 @@
 //                             le projet, le moteur et influenceA, qu'elle avait déjà)
 //
 // 1. L'AUDIT (audit.json) : un projet où chaque sorte de module, et trois machines (MINILOGUE XD,
-//    ACID-3, TR-8S), a son attracteur — sept anneaux de 400, le centre à 200 du bord : poids 0,5 ;
+//    ACID-3, TR-8S, sur le module de leur voix), a son attracteur — sept anneaux de 400, le centre à 200 du bord : poids 0,5 ;
 //    son segment couvre les temps 4 à 8 ; chaque réglage continu loin de son défaut. La lecture en
 //    temps réel ; pour chaque réglage continu, ce que le moteur entend avant (temps 2), pendant
 //    (temps 6) et après (temps 10) : la valeur que tient l'instrument d'ODIO (getParameter), l'AudioParam
@@ -91,7 +91,9 @@ async function audit() {
       // câblé à la sortie : un nœud que rien ne tire n'est pas rendu, ses AudioParam ne bougent pas (un jouet sans son ne se câble pas)
       if (!d.jouet || d.role === 'effect') p.cables.push({ a: `au${type}`, b: master.id });
     }
-    for (const [j, [id, type]] of [['ml', 'analog'], ['a3', 'acid'], ['tr', 'rythme']].entries()) {
+    // le module qui porte le son d'une machine : celui de sa voix (TYPE_DE_VOIX), comme quand on la pose
+    for (const [j, id] of ['ml', 'a3', 'tr'].entries()) {
+      const type = T.TYPE_DE_VOIX[MB.MACHINE_ENGINES[id].voice];
       const def = MB.MACHINES.find((x) => x.id === id), y = 40000 + j * 3000, ctl = {};
       for (const s of def.sections) for (const d of T.descripteursDe(s.id)) if (d.curve !== 'choice') ctl[d.id] = d.default > 50 ? 0 : 100;
       const sec = Object.fromEntries(def.sections.map((s, k) => [s.id, { x: k * 3000, y, w: 200, h: 200 }]));
