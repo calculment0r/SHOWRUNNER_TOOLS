@@ -647,3 +647,6 @@ termes du modèle (pas, graine, crf, LoRA, le graphe) restent dans Avancé, chac
 Vu en passant, par le pilote : déposer un asset **au milieu de la rangée** des références tombe sur une vignette et la
 remplace (la règle des places, la même qu'Image) ; pour ajouter, on dépose sur le « + » ou n'importe où ailleurs sur
 la barre. Le pilote le fait, et vérifie qu'une image déposée sur la place d'un élément est refusée, et que c'est dit.
+
+Contrôles, à la fin du lot (09/10) : `check.py movie movie_multishot movie_invite` 129 / 0 ; le pilote
+`movie/pilote_video.mjs` 44 / 0 (moteurs factices, faux studio Character Factory) ; `check.py` complet **4 064 / 0**.
