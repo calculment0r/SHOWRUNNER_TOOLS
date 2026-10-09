@@ -93,19 +93,22 @@ export function enveloppe(app, m, { w = 220, h = 96, L: lie = null } = {}) {
 }
 
 // Le moteur de Macro : 24 choix, un bouton qui ouvre le menu commun, rangé
-// par famille (plaits/macro.js, FAMILLES) — 24 boutons côte à côte ne tiennent pas
-function choixMoteur(L, sp) {
-  const b = el('button', { class: 'tb ghost sm ap-moteur', type: 'button', title: 'le moteur de Plaits (24)' });
-  const peindre = () => { b.textContent = `${sp.opts[Math.round(L.get('moteur'))] || ''} ▾`; };
+// par famille (plaits/macro.js, FAMILLES) — 24 boutons côte à côte ne tiennent pas.
+// 09/10 : le même bouton pour les douze modèles du Résonateur et ses onze accords.
+function choixMoteur(L, sp, { k = 'moteur', familles = FAMILLES, titre = 'le moteur de Plaits (24)' } = {}) {
+  const b = el('button', { class: 'tb ghost sm ap-moteur', type: 'button', title: titre });
+  const peindre = () => { b.textContent = `${sp.opts[Math.round(L.get(k))] || ''} ▾`; };
   b.onclick = () => {
-    const r = b.getBoundingClientRect(), cur = Math.round(L.get('moteur'));
-    menu(r.left, r.bottom + 4, FAMILLES.flatMap(([nom, a, z]) => [{ head: nom.toLowerCase() },
-      ...sp.opts.slice(a, z).map((o, j) => ({ label: o, checked: cur === a + j, onclick: () => { L.pose('moteur', a + j); L.fin(); peindre(); } }))]));
+    const r = b.getBoundingClientRect(), cur = Math.round(L.get(k));
+    menu(r.left, r.bottom + 4, familles.flatMap(([nom, a, z]) => [...(nom ? [{ head: nom.toLowerCase() }] : []),
+      ...sp.opts.slice(a, z).map((o, j) => ({ label: o, checked: cur === a + j, onclick: () => { L.pose(k, a + j); L.fin(); peindre(); } }))]));
   };
   L.ecoute(peindre);
   peindre();
   return el('div', { class: 'mu-choice ap-choix' }, el('span', { class: 'lbl' }, sp.label), b);
 }
+// les modèles de Rings : les six du module, puis son synthé de cordes caché et ses six effets (mutable/resonateur.js)
+const FAMILLES_RINGS = [['Le résonateur', 0, 6], ['Le synthé de cordes caché', 6, 12]];
 
 // Les moteurs FM-6 de Macro (2 à 4) : HARMO choisit l'un des 32 patchs DX7 de
 // la banque ; ce bouton les nomme (plaits/macro.js, PATCHS_FM). Ailleurs il se tait.
@@ -140,6 +143,8 @@ export function instrument(app, m, { accent = 'cy' } = {}) {
     const sp = def.params.find((p) => p.k === k);
     if (!sp) return null;
     if (m.type === 'macro' && k === 'moteur') return choixMoteur(L, sp);
+    if (m.type === 'resonateur' && k === 'modele') return choixMoteur(L, sp, { k, familles: FAMILLES_RINGS, titre: 'le modèle de Rings (12)' });
+    if (m.type === 'resonateur' && k === 'accord') return choixMoteur(L, sp, { k, familles: [['Les accords de Bryan Noll', 0, 11]], titre: 'l\'accord des cordes sympathiques et du synthé caché' });
     if (m.type === 'macro' && k === 'harmo') return el('div', { class: 'ap-macro-harmo' }, choixPatch(L), L.molette(k, { accent: i === 0 ? accent : 'cy' }));
     // une forme d'onde, un mode de filtre : leur dessin ; un modèle de Plaits : son nom
     const dessin = k === 'wave' ? (j, o) => iconeOnde(o) : k === 'fmode' ? (j) => iconeFiltre(['lowpass', 'bandpass', 'highpass'][j]) : null;
