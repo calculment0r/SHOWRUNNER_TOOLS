@@ -30,6 +30,7 @@ import { migrate, workOf, describeWork, copyClips, pasteClips, splitClip, consol
   retenirSons, noterOrigine } from './projet.js';
 import { versSession, clipDeRef, refDe } from './biblio.js';   // la bibliothèque du projet, « Envoyer à la Session » (05/10 au soir)
 import { empreinteStructure, suivreStructure } from './projet.js';   // la structure (06/10) : sections ↔ balises des paroles
+import { empreinteClips, ecraserRecouverts } from './projet.js';   // le recouvrement (09/10) : un clip posé l'emporte sur ce qu'il recouvre
 import { createUndo, isTextField } from '../commun/undo.js';
 import { createTimeline } from './timeline.js';
 import { createSession } from './session.js';   // la vue Session (05/10) : le lanceur de clips, la console dessous
@@ -58,6 +59,7 @@ const S = {
   oct: 4, vel: 0.85, kbd: true, midi: null, rec: false, metro: false,
 };
 let structVue = null;      // l'empreinte de la structure au dernier geste (projet.js, empreinteStructure)
+let clipsVus = null;       // l'empreinte des clips au dernier geste (projet.js, empreinteClips)
 const items = new Map();   // les objets de la bibliothèque déjà lus
 async function loadItem(id) {
   if (!items.has(id)) items.set(id, api(`library/${id}`).then((it) => ({ ...it, href: href(it.url) })));
@@ -110,6 +112,14 @@ export const app = {
   // 'quiet' (la vue s'est déjà redessinée elle-même : on enregistre),
   // 'mute', 'graph' (modules ou câbles), 'data' (clips, motifs), 'meta'
   commit(kind, m) {
+    // le recouvrement (09/10) : les clips que ce geste a posés, déplacés ou rallongés
+    // l'emportent sur ce qu'ils recouvrent de leur piste (projet.js, ecraserRecouverts)
+    if (kind !== 'param' && S.proj) {
+      const r = ecraserRecouverts(S.proj, clipsVus, uid);
+      clipsVus = r.vu;
+      if (r.retires.length) { S.sel.clips = (S.sel.clips || []).filter((id) => !r.retires.includes(id)); if (r.retires.includes(S.sel.clip)) S.sel.clip = null; }
+      if (r.n && kind === 'quiet') kind = 'data';   // des clips ont bougé : le moteur et la vue suivent
+    }
     if (kind !== 'param') retenirSons(S.proj);   // la bibliothèque du projet : un son posé y entre de lui-même (projet.js)
     // la structure (06/10) : les balises des paroles d'une région et les sections
     // du projet se suivent, dans le même geste (projet.js, suivreStructure) ; un
@@ -1094,6 +1104,7 @@ const snaps = undoStack.snapshots({
     for (const k of Object.keys(workOf(p))) if (!(k in o)) delete p[k];
     for (const k of Object.keys(o)) p[k] = fondre(p[k], o[k]);
     structVue = empreinteStructure(p);   // annuler rend sections et paroles ensemble : rien à récrire
+    clipsVus = empreinteClips(p);        // ni rien à écraser : l'instantané est un état d'après geste
     const ok = new Set(p.clips.map((c) => c.id));
     S.sel.clips = (S.sel.clips || []).filter((id) => ok.has(id));
     if (!ok.has(S.sel.clip)) S.sel.clip = null;
@@ -1130,6 +1141,7 @@ async function openProject(id, esp = {}) {
   if (!p.space && !esp.espace && !espace()) await session();   // le Workspace de l'onglet : dit par /api/auth/me
   S.proj = p;
   structVue = empreinteStructure(p);
+  clipsVus = empreinteClips(p);   // un projet d'avant garde ses clips superposés, jusqu'au geste qui en pose un
   espProjet = p.space || esp.espace || espace() || null;
   espaceDocument(espProjet, p.id);   // l'en-tête dit l'espace du projet ; une page rechargée le rouvre dans le sien
   S.view = MAKERS[p.ui?.view] ? p.ui.view : 'timeline';

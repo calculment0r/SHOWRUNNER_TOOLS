@@ -1130,3 +1130,50 @@ export function trimStart(p, c, d) {
   c.start += d; c.len -= d;
   return d;
 }
+
+// ── le recouvrement (09/10, la grande passe : docs/etudes/musique.md) ──
+// Sur une piste, deux clips ne jouent jamais au même endroit : avant, un clip
+// collé, glissé, copié ou dupliqué sur un autre s'y superposait, le moteur
+// jouait les deux (le son doublé, l'un caché sous l'autre). Comme dans Live
+// (son forum : « moving a slice … replaced the original audio underneath »,
+// « layering clips on one track isn't possible ») : un clip posé l'emporte sur
+// ce qu'il recouvre de sa piste. Ce qui est dessous s'en va — coupé autour de
+// lui, raccourci, rogné par le début (son contenu reste calé : trimStart), ou
+// retiré s'il est tout dessous —, sauf un clip désactivé : il ne sonne pas, il
+// reste (la prise rend muets les clips qu'elle recouvre et n'efface rien :
+// enregistrement.js). Juste par construction, quel que soit le geste :
+// musique.js (app.commit) compare le projet à l'empreinte du geste d'avant ;
+// sont « posés » les clips neufs et ceux dont la piste, le début ou la longueur
+// ont changé. Entre deux clips posés qui se recouvrent, rien ne se décide (un
+// groupe qu'on déplace ensemble reste tel quel). Rend { vu (l'empreinte
+// neuve), retires (les ids partis), n (les clips touchés) }.
+export const empreinteClips = (p) => new Map(p.clips.map((c) => [c.id, `${c.track}|${c.start}|${c.len}`]));
+export function ecraserRecouverts(p, vu, uid) {
+  let now = empreinteClips(p);
+  const retires = [];
+  let n = 0;
+  if (vu) {
+    const poses = p.clips.filter((c) => vu.get(c.id) !== now.get(c.id));
+    const pose = new Set(poses.map((c) => c.id));
+    const out = new Set();
+    for (const x of poses) {
+      const a = x.start, b = x.start + x.len;
+      for (const y of p.clips.filter((c) => c.track === x.track && !pose.has(c.id) && !c.mute && !out.has(c.id)
+        && c.start < b - 1e-9 && c.start + c.len > a + 1e-9)) {
+        n++;
+        const apres = y.start + y.len > b + MIN_LEN - 1e-9;          // il dépasse après lui
+        if (y.start < a - MIN_LEN + 1e-9) {                          // il commence avant : sa tête reste, raccourcie
+          if (apres) splitClip(p, y, b, uid);                        // et sa queue, en clip à part
+          y.len = Math.min(y.len, a - y.start);
+          if (y.fo) y.fo = 0;
+        } else if (apres) {                                          // il finit après : rogné par le début, même clip
+          trimStart(p, y, b - y.start);
+          if (y.fi) y.fi = 0;
+        } else out.add(y.id);                                        // tout dessous (à une double-croche près) : retiré
+      }
+    }
+    if (out.size) { p.clips = p.clips.filter((c) => !out.has(c.id)); retires.push(...out); }
+    if (n) now = empreinteClips(p);
+  }
+  return { vu: now, retires, n };
+}

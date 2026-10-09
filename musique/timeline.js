@@ -1361,7 +1361,11 @@ export function createTimeline(app) {
         }
       }
       if (!edge && ev.ctrlKey) {                           // Ctrl : les originaux restent, ce qui bouge est la copie
-        for (const x of group) p.clips.push({ ...JSON.parse(JSON.stringify(orig.get(x.id))), id: app.uid('c') });
+        // la copie est un clip neuf, l'original garde son id à sa place : elle seule est
+        // « posée », elle l'emporte sur ce qu'elle recouvre — l'original compris (le recouvrement, projet.js)
+        const cps = group.map((x) => { const cp = { ...JSON.parse(JSON.stringify(x)), id: app.uid('c') }; restore(x); p.clips.push(cp); return cp; });
+        S.sel.clips = cps.map((x) => x.id);
+        S.sel.clip = cps[group.indexOf(c)]?.id || cps[0].id;
         toast(`${group.length} clip${group.length > 1 ? 's' : ''} copié${group.length > 1 ? 's' : ''}`);
       }
       app.commit('data');

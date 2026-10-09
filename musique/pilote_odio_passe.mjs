@@ -90,6 +90,52 @@ for (const theme of ['dark', 'light']) {
   const sess = await page.evaluate(() => ({ joue: window.__mu.engine.sess.joue.size, file: window.__mu.engine.sess.file.length }));
   ok(sess.joue === 0 && sess.file === 0, `${theme} · Session : « Arrêter tous les clips » arrête à la mesure (${JSON.stringify(sess)})`);
   await page.keyboard.press('Space');
+
+  // ── l'arrangement : un clip posé l'emporte sur ce qu'il recouvre de sa piste ──
+  // (09/10 : collé, glissé, copié par Ctrl, il s'y superposait et le moteur jouait les deux)
+  await ouvrir(page, `Passe Recouvrement ${theme}`);
+  const basse = () => page.evaluate(() => window.__mu.S.proj.clips.filter((c) => c.track === 't2').map((c) => [c.id, c.start, c.len]).sort((a, b) => a[1] - b[1]));
+  const sonnent = (a, b) => page.evaluate(([a, b]) => window.__mu.S.proj.clips.filter((c) => c.track === 't2' && !c.mute && c.start < b && c.start + c.len > a).length, [a, b]);
+  const avant = await basse();
+  const titre = async (id) => page.$eval(`.clip[data-id="${id}"] .ch`, (n) => { const r = n.getBoundingClientRect(); return { x: r.x + 20, y: r.y + r.height / 2 }; });
+  const ppb = await page.evaluate(() => window.__mu.S.proj.ui.ppb || 83 / 4);
+  let t0 = await titre(avant[0][0]);
+  await page.mouse.move(t0.x, t0.y); await page.mouse.down();
+  for (let i = 1; i <= 8; i++) await page.mouse.move(t0.x + i * ppb, t0.y);
+  await page.mouse.up();
+  await page.waitForTimeout(300);
+  let apres = await basse();
+  ok(JSON.stringify(apres) === JSON.stringify([[avant[0][0], 24, 16], [avant[1][0], 40, 8], [avant[2][0], 48, 16]]) && await sonnent(32, 40) === 1,
+    `${theme} · le couplet de la basse glissé de 8 temps rogne le refrain par le début, un seul clip sonne entre 32 et 40 (${JSON.stringify(apres)})`);
+  await page.keyboard.press('Control+z');
+  await page.waitForTimeout(500);
+  ok(JSON.stringify(await basse()) === JSON.stringify(avant), `${theme} · un seul Ctrl+Z rend les deux clips (${JSON.stringify(await basse())})`);
+  // copier le couplet, le coller au temps 40 : il coupe le refrain autour de lui
+  t0 = await titre(avant[0][0]);
+  await page.mouse.click(t0.x, t0.y);
+  await page.keyboard.press('Control+c');
+  await page.evaluate(() => window.__mu.engine.seek(36));
+  await page.keyboard.press('Control+v');
+  await page.waitForTimeout(400);
+  apres = await basse();
+  ok(apres.length === 4 && JSON.stringify(apres.map((c) => [c[1], c[2]])) === JSON.stringify([[16, 16], [32, 4], [36, 16], [52, 12]]) && await sonnent(36, 52) === 1,
+    `${theme} · collé à 36, le couplet coupe le refrain et rogne le final ; un seul clip sonne de 36 à 52 (${JSON.stringify(apres)})`);
+  await shot(page, `recouvrement_colle_${theme}`);
+  await page.keyboard.press('Control+z');
+  await page.waitForTimeout(500);
+  ok(JSON.stringify(await basse()) === JSON.stringify(avant), `${theme} · Ctrl+Z rend le refrain et le final entiers`);
+  // la prise n'efface rien : les clips qu'elle recouvre deviennent muets et restent
+  await page.evaluate(() => { const { S, app } = window.__mu; S.proj.tracks[1].arm = true; app.selectTrack('t2'); app.commit('quiet'); window.__mu.engine.seek(32); });
+  await page.keyboard.press('F9');
+  await page.keyboard.press('Space');
+  await page.waitForTimeout(300);
+  for (const k of ['KeyA', 'KeyD', 'KeyG']) { await page.keyboard.down(k); await page.waitForTimeout(150); await page.keyboard.up(k); await page.waitForTimeout(80); }
+  await page.keyboard.press('Space');
+  await page.keyboard.press('F9');
+  await page.waitForTimeout(600);
+  const prise = await page.evaluate(() => window.__mu.S.proj.clips.filter((c) => c.track === 't2').map((c) => [c.start, c.len, !!c.mute, c.name || '']).sort((a, b) => a[0] - b[0]));
+  ok(prise.some((c) => c[3] === 'Nouveau') && prise.some((c) => c[0] === 32 && c[1] === 16 && c[2]),
+    `${theme} · la prise se pose, le refrain qu'elle recouvre reste entier et muet (${JSON.stringify(prise)})`);
   await ctx.close();
 }
 
