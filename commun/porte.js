@@ -91,17 +91,22 @@ function paintAsk(me, err = '') {
 
 function paintWait(me) {
   const nm = me.user?.name || '';
+  // un invité (D5, 09/10) : un admin de Team l'a mis dans sa Team, Cal valide ; « annuler » ne ferait que fermer
+  // ce navigateur (son compte n'est pas à lui de défaire : core/auth.py, cancel_request)
+  const inv = me.invited;
   box.replaceChildren(frame(
-    el('span', { class: 'porte-state' }, el('i'), 'demande envoyée · en attente de Cal'),
-    el('p', {}, `Bonjour ${nm}. Cal doit accepter ce pseudo ; cette page s’ouvrira toute seule, tu peux la laisser ouverte. `,
-      'Ensuite, il suffira de retaper ton pseudo, d’où tu veux.'),
+    el('span', { class: 'porte-state' }, el('i'), inv ? 'invitation · en attente de Cal' : 'demande envoyée · en attente de Cal'),
+    inv ? el('p', {}, `Bonjour ${nm}. ${inv.by_name ? `${inv.by_name} t’a invité ; ` : ''}ton compte attend la validation de Cal. `,
+      'Cette page s’ouvrira toute seule dès qu’il l’aura validé, tu peux la laisser ouverte. Ensuite, il suffira de retaper ton pseudo, d’où tu veux.')
+      : el('p', {}, `Bonjour ${nm}. Cal doit accepter ce pseudo ; cette page s’ouvrira toute seule, tu peux la laisser ouverte. `,
+        'Ensuite, il suffira de retaper ton pseudo, d’où tu veux.'),
     el('div', { class: 'porte-pulse', 'aria-hidden': 'true' }, el('i')),
-    el('div', { class: 'row' }, el('span', { class: 'lbl' }, me.since ? `demandé à ${hhmm(me.since)}` : ''),
+    el('div', { class: 'row' }, el('span', { class: 'lbl' }, inv?.at ? `invité à ${hhmm(inv.at)}` : me.since ? `demandé à ${hhmm(me.since)}` : ''),
       el('span', { class: 'sp' }),
       el('button', { class: 'tb ghost sm', onclick: async () => {
         try { await api('auth/cancel', { method: 'POST' }); } catch { /* */ }
         paintAsk({ state: 'anonymous' });
-      } }, 'Annuler la demande'))));
+      } }, inv ? 'Taper un autre pseudo' : 'Annuler la demande'))));
   // relu toutes les 4 s, onglet visible seulement ; de retour sur l'onglet, tout de suite (shell.js, releve)
   pollT = releve(async () => {
     try {

@@ -366,6 +366,7 @@ def selftest(call, ok) -> None:
         auth._hits.clear()
     try:
         _http(ok, H, same)
+        _validation(ok, H, same)
         _depart(ok, H, same)
         _budget(ok, H, same)
         _migration(ok, tempfile, shutil, json, hashlib, Path)
@@ -467,7 +468,8 @@ def _http(ok, H, same) -> None:
         ok(s == 200 and got == want, f"équipes : membre {role} dans un Workspace → {got} ({s})")
     ok(espaces.can_invite(ana, s2) and not espaces.can_invite(ana, s1), "équipes : admin d'un Workspace : invite là, pas ailleurs")
     s, d, _ = P(f"/api/equipes/{tid}/membres", {"pseudo": "Hal Essai", "role": "guest", "spaces": [s2]}, tok=A)
-    ok(s == 200, f"équipes : l'admin du Workspace y fait un guest ({s} {err(d)})")
+    ok(s == 200 and (d.get("added") or {}).get("pending") is True,
+       f"équipes : l'admin du Workspace y fait un guest — un pseudo neuf, qui attend Cal (D5) ({s} {err(d)})")
     s, d, _ = P(f"/api/equipes/{tid}/membres", {"pseudo": "Ivo Essai", "role": "member"}, tok=A)
     ok(s == 403, f"équipes : … mais pas un membre de la Team ({s} {err(d)[:60]})")
     s, d, _ = P(f"/api/espaces/{s2}/membres/ana-essai", {"role": "none"})
@@ -608,6 +610,128 @@ def _http(ok, H, same) -> None:
     s, d, _ = P(f"/api/equipes/{tid}/membres/cal/retirer")
     ok(s == 409, f"équipes : le propriétaire ne part pas ({s})")
     ok(any(e["event"] == "team : rôle" for e in auth.journal_tail(300)), "équipes : les gestes vont au journal")
+
+
+def _validation(ok, H, same) -> None:
+    """D5 (Cal, 09/10) : un pseudo neuf qu'un autre que Cal met dans sa Team — par son pseudo, ou par le
+    lien d'une Team — attend la validation de Cal : sans droit ni entrée ; Cal l'accepte (le compte et sa
+    place) ou le refuse (tout disparaît). Un compte actif entre directement. Ce que Cal crée : accepté."""
+    err = lambda d: d.get("error", "") if isinstance(d, dict) else str(d)[:80]   # noqa: E731
+    _, _, adm = H("POST", "/api/auth/enter", {"name": "nico007"}, headers=same)
+    P = lambda path, body=None, tok=adm: H("POST", path, body if body is not None else {}, cookie=tok, headers=same)   # noqa: E731
+    G = lambda path, tok=adm: H("GET", path, cookie=tok)   # noqa: E731
+    real_ip = auth._ip
+    n = iter(range(40, 90))
+
+    def entrer(name):   # d'une adresse à lui : les limites de la porte des autres essais ne comptent pas
+        a = f"203.0.113.{next(n)}"
+        auth._ip = lambda req: a
+        try:
+            return H("POST", "/api/auth/enter", {"name": name}, headers=same)
+        finally:
+            auth._ip = real_ip
+
+    s, t, _ = P("/api/equipes", {"name": "Valid Essai"})
+    tid, sid = t["id"], t["spaces"][0]["id"]
+    P("/api/admin/users", {"name": "Rui Valid", "access": "studio"})
+    P(f"/api/equipes/{tid}/membres", {"pseudo": "Rui Valid", "role": "admin"})
+    _, _, R = entrer("Rui Valid")
+
+    # un pseudo neuf mis par un admin de Team (pas Cal) : en attente, sans droit ni entrée
+    s, d, _ = P(f"/api/equipes/{tid}/membres", {"pseudo": "Max Valid", "role": "member"}, R)
+    mx = auth.user("max-valid")
+    ok(s == 200 and (d.get("added") or {}).get("pending") is True and (d.get("added") or {}).get("created")
+       and mx["state"] == "pending" and (mx.get("invited") or {}).get("by") == "rui-valid" and mx["invited"].get("team") == tid
+       and mx["invited"].get("role") == "member", f"validation : un admin de Team met un pseudo neuf : il attend Cal ({s} {err(d)} {mx.get('invited')})")
+    row = next((m for m in d.get("members", []) if m["id"] == "max-valid"), {})
+    ok(row.get("state") == "pending" and row.get("role") == "member",
+       f"validation : sa place est écrite, la ligne dit qu'il attend (pastille « attend Cal ») ({row.get('state')})")
+    ok(espaces.profile(mx, sid) is None and not espaces.can_view(mx, sid) and espaces.team_role(mx, tid) is None
+       and espaces.teams_of(mx) == [] and not auth.can_compute(mx, sid) and not espaces.can_manage(mx, tid),
+       "validation : en attente, sa place ne compte pas (profil, voir, rôle, Teams, calcul, gérer : rien)")
+    s, me, M = entrer("Max Valid")
+    ok(s == 200 and me.get("state") == "pending" and M, f"validation : il tape son pseudo : la porte le fait attendre ({s} {me.get('state')})")
+    s, me, _ = G("/api/auth/me", M)
+    ok(me.get("state") == "pending" and (me.get("invited") or {}).get("by_name") == "Rui Valid" and "teams" not in me,
+       f"validation : /api/auth/me dit qu'il attend la validation de Cal, invité par Rui ({me.get('invited')})")
+    for path in ("/api/library", "/api/equipes", f"/api/equipes/{tid}"):
+        s, _, _ = G(path, M)
+        ok(s == 401, f"validation : en attente, {path} lui est fermé ({s})")
+    s, st, _ = G("/api/admin/state")
+    rq = next((u for u in st.get("requests", []) if u["id"] == "max-valid"), {})
+    inv = rq.get("invited") or {}
+    ok(inv.get("by_name") == "Rui Valid" and [x["team_name"] for x in inv.get("teams", [])] == ["Valid Essai"]
+       and inv["teams"][0]["role_fr"] == "membre",
+       f"validation : Admin → Demandes : « invité par Rui dans la Team Valid Essai (membre) » ({inv})")
+    s, _, _ = P(f"/api/equipes/{tid}/membres", {"pseudo": "Max Valid", "role": "member"}, R)
+    ok(s == 409, f"validation : le remettre ne fait rien de plus tant qu'il attend ({s})")
+    s, _, _ = P("/api/auth/cancel", {}, M)
+    ok(auth.user("max-valid") and auth.user("max-valid")["state"] == "pending",
+       "validation : « Annuler » à la porte ne défait pas l'invitation (ce navigateur seulement)")
+
+    # Cal l'accepte : le compte ET sa place
+    s, d, _ = P("/api/admin/requests/max-valid/accept")
+    mx = auth.user("max-valid")
+    ok(s == 200 and mx["state"] == "active" and mx.get("access") == "apps" and mx.get("perso", True) is not False
+       and espaces.team_role(mx, tid) == "member" and espaces.can_edit(mx, sid),
+       f"validation : Cal l'accepte : actif, membre de la Team, il y modifie ({s} {err(d)})")
+    _, _, M = entrer("Max Valid")
+    s, me, _ = G("/api/auth/me", M)
+    ok(me.get("state") == "active" and "Valid Essai" in [x["name"] for x in me.get("teams", [])],
+       f"validation : il entre, et voit la Team ({me.get('state')})")
+
+    # un guest neuf : Cal le refuse — le compte et sa place disparaissent ; le pseudo recréé n'en hérite pas
+    s, d, _ = P(f"/api/equipes/{tid}/membres", {"pseudo": "Gwen Valid", "role": "guest", "guest": "acteur", "spaces": [sid]}, R)
+    gw = auth.user("gwen-valid")
+    ok(s == 200 and gw["state"] == "pending" and gw.get("perso") is False and (gw.get("invited") or {}).get("guest") == "acteur",
+       f"validation : un guest neuf attend aussi ({s} {err(d)})")
+    _, _, Gw = entrer("Gwen Valid")
+    s, _, _ = P("/api/admin/requests/gwen-valid/refuse")
+    t_ = espaces.team(tid)
+    ok(s == 200 and auth.user("gwen-valid") is None and "gwen-valid" not in t_["members"]
+       and "gwen-valid" not in (espaces.space(sid) or {}).get("members", {}) and not espaces.invitations_of("gwen-valid"),
+       f"validation : Cal le refuse : le compte, sa place dans la Team et le Workspace disparaissent ({s})")
+    s, me, _ = G("/api/auth/me", Gw)
+    ok(me.get("state") == "refused", f"validation : sa porte dit « refusé » ({me.get('state')})")
+    P("/api/admin/users", {"name": "Gwen Valid", "access": "apps"})
+    ok(espaces.team_role(auth.user("gwen-valid"), tid) is None and not espaces.can_view(auth.user("gwen-valid"), sid),
+       "validation : le même pseudo recréé n'hérite de rien")
+
+    # un compte existant, actif : il entre directement ; ce que Cal crée : accepté d'emblée
+    P("/api/admin/users", {"name": "Ola Valid", "access": "studio"})
+    s, d, _ = P(f"/api/equipes/{tid}/membres", {"pseudo": "Ola Valid", "role": "member"}, R)
+    ok(s == 200 and not (d.get("added") or {}).get("pending") and espaces.team_role(auth.user("ola-valid"), tid) == "member",
+       f"validation : un compte déjà accepté entre directement ({s} {err(d)})")
+    s, d, _ = P(f"/api/equipes/{tid}/membres", {"pseudo": "Pia Valid", "role": "guest", "guest": "viewer", "spaces": [sid]})
+    pia = auth.user("pia-valid")
+    ok(s == 200 and not (d.get("added") or {}).get("pending") and pia["state"] == "active" and espaces.can_view(pia, sid),
+       f"validation : un pseudo neuf que Cal met dans une Team : accepté d'emblée ({s} {err(d)})")
+    s, d, _ = P("/api/admin/users", {"name": "Ugo Valid"})
+    ok(s == 200 and auth.user("ugo-valid")["state"] == "active", "validation : Admin → Ajouter quelqu'un : accepté d'emblée")
+
+    # le lien d'une Team fait par un non-Cal : le pseudo neuf attend Cal ; sur un lien de Cal, il entre
+    s, inv, _ = P(f"/api/equipes/{tid}/invitations", {"role": "member", "hours": 24}, R)
+    ok(s == 200 and inv.get("token"), f"validation : Rui fait un lien ({s} {err(inv)})")
+    s, d, Q = entrer("Quy Valid")
+    s, r, _ = H("POST", f"/api/auth/equipe/{inv['token']}", {}, cookie=Q, headers=same)
+    qy = auth.user("quy-valid")
+    ok(s == 200 and r.get("pending") is True and r.get("accepted") is False and r.get("by_name") == "Rui Valid"
+       and qy["state"] == "pending" and (qy.get("invited") or {}).get("lien") == inv["id"]
+       and espaces.team_role(qy, tid) is None and "quy-valid" in espaces.team(tid)["members"],
+       f"validation : le lien de Rui : le pseudo neuf attend Cal, sa place est écrite ({s} {err(r)})")
+    s, me, _ = G("/api/auth/me", Q)
+    ok(me.get("state") == "pending" and (me.get("invited") or {}).get("by_name") == "Rui Valid",
+       f"validation : … sa porte le dit ({me.get('invited')})")
+    s, _, _ = P("/api/admin/requests/quy-valid/accept")
+    ok(s == 200 and espaces.team_role(auth.user("quy-valid"), tid) == "member", f"validation : Cal l'accepte : membre ({s})")
+    s, r, _ = H("POST", f"/api/auth/equipe/{inv['token']}", {}, cookie=entrer("Ugo Valid")[2], headers=same)
+    ok(s == 200 and r.get("pending") is False and espaces.team_role(auth.user("ugo-valid"), tid) == "member",
+       f"validation : un compte actif ouvre le lien de Rui : il entre directement ({s} {err(r)})")
+    s, inv2, _ = P(f"/api/equipes/{tid}/invitations", {"role": "member", "hours": 24})
+    s, d, V = entrer("Vic Valid")
+    s, r, _ = H("POST", f"/api/auth/equipe/{inv2['token']}", {}, cookie=V, headers=same)
+    ok(s == 200 and r.get("accepted") is True and auth.user("vic-valid")["state"] == "active",
+       f"validation : le lien de Cal : le pseudo neuf entre ({s} {err(r)})")
 
 
 def _depart(ok, H, same) -> None:
