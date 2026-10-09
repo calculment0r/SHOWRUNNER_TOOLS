@@ -414,8 +414,68 @@ function personne(u) {
 
 function personnes() {
   const us = S.state.users;
-  return [head('Personnes', 'B', plural(us.length, 'compte', 'comptes')), reglages(),
+  return [head('Personnes', 'B', plural(us.length, 'compte', 'comptes')), reglages(), manyDelete(us),
     el('div', { class: 'grid2' }, ...us.map(personne))];
+}
+
+// Supprimer plusieurs comptes d'un coup (Cal, 09/10 : « on enlève tous les derniers logins qu'on a créés pour
+// l'atelier avec les étudiants, on a fini ») : on coche, puis chacun passe par le même chemin que « Supprimer »
+// (son compte, ses connexions, ses places dans les Teams, ses travaux en file ; ce qu'il a rangé reste dans les
+// Workspaces), l'un après l'autre ; un refus dit pourquoi et n'arrête pas les suivants. « Créés par une Team » :
+// les pseudos mis dans une Team par son admin (auth.create_invited, `via: equipe`) — ceux d'un atelier.
+const VIA_FR = { equipe: 'par une Team', admin: 'par Cal' };
+function manyDelete(us) {
+  const D = S.del ||= { open: false, sel: [], run: false, out: null };
+  const can = us.filter((u) => u.role !== 'admin' && u.state !== 'pending');
+  const viaTeam = can.filter((u) => u.via === 'equipe').map((u) => u.id);
+  const head2 = el('div', { class: 'card-head' }, el('span', { class: 'nm' }, 'Supprimer plusieurs comptes'), el('span', { class: 'sp' }),
+    el('button', { class: 'tb ghost sm', type: 'button', 'aria-expanded': D.open ? 'true' : 'false', disabled: D.run || null,
+      onclick: () => { D.open = !D.open; render(true); } }, D.open ? 'Fermer' : 'Ouvrir'));
+  if (!D.open) return el('div', { class: 'card many-del' }, head2);
+  D.sel = D.sel.filter((id) => can.some((u) => u.id === id));
+  const pick = (ids) => { D.sel = ids; render(true); };
+  const n = D.sel.length;
+  const go = () => {
+    const names = can.filter((u) => D.sel.includes(u.id)).map((u) => u.pseudo || u.name);
+    confirmBox(`Supprimer ${plural(n, 'compte', 'comptes')}`,
+      `${names.join(', ')}. Les comptes, leurs connexions et leurs places dans les Teams disparaissent, leurs pseudos redeviennent libres ; ce qu’ils ont rangé reste dans les Workspaces.`,
+      `Supprimer ${n}`, async () => {
+        D.run = true; D.out = can.filter((u) => D.sel.includes(u.id)).map((u) => ({ id: u.id, name: u.pseudo || u.name, st: 'wait', msg: '' }));
+        render(true);
+        for (const row of D.out) {
+          row.st = 'run'; render(true);
+          try { await post(`admin/users/${row.id}/supprimer`); row.st = 'gone'; } catch (e) { row.st = 'err'; row.msg = e.message; }
+        }
+        D.run = false;
+        const k = (s) => D.out.filter((x) => x.st === s).length;
+        D.sel = D.out.filter((x) => x.st === 'err').map((x) => x.id);
+        toast(`${plural(k('gone'), 'compte supprimé', 'comptes supprimés')}${k('err') ? `, ${k('err')} refusé${k('err') > 1 ? 's' : ''}` : ''}`, 6000);
+        refresh(true);
+      });
+  };
+  const ST = { wait: ['no', 'en attente'], run: ['run', 'en cours'], gone: ['ok', 'supprimé'], err: ['err', 'refusé'] };
+  return el('div', { class: 'card many-del' }, head2,
+    el('p', { class: 'adm-note' }, 'Coche les comptes à supprimer. Ce qu’ils ont rangé reste dans les Workspaces ; un admin ne se supprime pas d’ici.'),
+    el('div', { class: 'row' }, el('span', { class: 'lbl' }, 'cocher'),
+      el('button', { class: 'tb ghost sm', type: 'button', disabled: D.run || !viaTeam.length || null,
+        title: viaTeam.length ? 'les pseudos qu’un admin de Team a créés (un atelier)' : 'aucun compte créé par une Team',
+        onclick: () => pick([...new Set([...D.sel, ...viaTeam])]) }, `créés par une Team · ${viaTeam.length}`),
+      el('button', { class: 'tb ghost sm', type: 'button', disabled: D.run || !n || null, onclick: () => pick([]) }, 'aucun'),
+      el('span', { class: 'sp' }),
+      el('button', { class: 'tb', type: 'button', disabled: D.run || !n || null, title: n ? '' : 'coche d’abord des comptes', onclick: go },
+        n ? `Supprimer les ${n}` : 'Supprimer')),
+    el('div', { class: 'many-list', role: 'group', 'aria-label': 'les comptes à supprimer' }, ...can.map((u) => {
+      const on = D.sel.includes(u.id);
+      const tms = (S.teams && S.teams.everyone ? S.teams.teams : []).filter((t) => !t.personal && (t.members || []).some((m) => m.id === u.id)).map((t) => t.name);
+      return el('label', { class: 'many-row' + (on ? ' on' : '') },
+        el('input', { type: 'checkbox', checked: on || null, disabled: D.run || null,
+          onchange: (e) => pick(e.target.checked ? [...D.sel, u.id] : D.sel.filter((x) => x !== u.id)) }),
+        el('span', { class: 'nm-s' }, u.pseudo || u.name),
+        el('span', { class: 'many-meta' }, [`créé ${fmtDate(u.created)}`, VIA_FR[u.via] || '', tms.join(' · ')].filter(Boolean).join(' · ')));
+    })),
+    D.out ? el('div', { class: 'bulk-out', role: 'status', 'aria-live': 'polite' }, ...D.out.map((x) => el('div', { class: 'row' },
+      el('span', { class: 'chip ' + ST[x.st][0] }, el('i'), ST[x.st][1]), el('span', { class: 'nm-s' }, x.name),
+      x.msg ? el('span', { class: 'bulk-why' }, x.msg) : null))) : null);
 }
 
 // ── C · les Teams ───────────────────────────────────────────
