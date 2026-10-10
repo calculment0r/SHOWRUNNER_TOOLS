@@ -209,6 +209,12 @@ Les frictions vues :
 
 Puis, petits chacun : comparer depuis le fil (5), le personnage sans fenêtre (6), la vignette dans le texte (7).
 
+**Le Multishot**, en particulier : ce que Cal demandait le 09/10 (y glisser des éléments, tirer ses poignées, ne plus
+l'avoir en fenêtre) est fait (`movie.md` § 10.4). Ce qui reste le concerne dans trois propositions : la réplique
+donnée au personnage nommé dans le plan (n° 3), la vignette glissée sur un plan (n° 7), la scène découpée en plans
+d'après un texte (n° 9). Ouvert, il prend 400 px des 900 de l'écran (mesuré) : le fil au-dessus se réduit à une
+bande, ce qui plaide pour les cartes du storyboard (n° 2) plutôt que pour une frise plus haute.
+
 ## Sources
 
 1. Midjourney, documentation Discord (la grille d'essais à basse résolution, les boutons de variation et
