@@ -117,7 +117,7 @@ Les frictions vues :
 
 - **Aujourd'hui** : le point ambre sur le nom dit qu'une demande attend ; le nom → Admin → Demandes → Accepter :
   4 gestes et une page (le téléphone, lui, a déjà ses deux boutons dans Telegram).
-- **Proposé** : le menu du nom montre la demande elle-même (« nico_b veut le Studio » · Accepter · Refuser), sur
+- **Proposé** : le menu du nom montre la demande elle-même (« ami_c veut le Studio » · Accepter · Refuser), sur
   toutes les pages ; le même chemin que les boutons de Telegram, qui passent déjà par le serveur. 4 → 2 (le nom,
   Accepter).
 - **Ce que ça change pour Cal** : il répond à un ami sans quitter ODIO.
