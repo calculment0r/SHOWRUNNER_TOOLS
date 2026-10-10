@@ -1360,6 +1360,8 @@ PALIER_FR = {"images": "les images", "sons": "les sons"}
 
 
 def _et(parts: list) -> str:
+    if not parts:   # une liste vide ne dit rien (elle levait IndexError)
+        return ""
     return parts[0] if len(parts) == 1 else ", ".join(parts[:-1]) + " et " + parts[-1]
 
 
@@ -2423,9 +2425,15 @@ def r_turn(req):
     if intent == "ingest":   # les images, les sons : en arrière-plan, pendant qu'on parle
         paliers = lancer_paliers(bid, tid, ingest_items(board, items), space)
         sent = [PALIER_FR[p["palier"]] for p in paliers if p["state"] != "skipped"]
-        more = {0: "", 1: {"les images": " Je regarde les images en arrière-plan : je te dis ce qu'elles sont dès qu'elles arrivent.",
-                           "les sons": " J'écoute les sons en arrière-plan (Transcrire) : je te dis ce qu'ils sont dès qu'ils arrivent."}.get(sent[0] if sent else "", ""),
-                }.get(len(sent), f" {_et(sent).capitalize()} suivent en arrière-plan : je te dis ce qu'ils sont dès qu'ils arrivent.")
+        # la phrase « … suivent en arrière-plan » ne se construit que pour deux paliers ou plus : en défaut d'un
+        # .get(), elle était évaluée même sans palier, et _et([]) faisait répondre 500 à la route
+        if len(sent) >= 2:
+            more = f" {_et(sent).capitalize()} suivent en arrière-plan : je te dis ce qu'ils sont dès qu'ils arrivent."
+        elif sent:
+            more = {"les images": " Je regarde les images en arrière-plan : je te dis ce qu'elles sont dès qu'elles arrivent.",
+                    "les sons": " J'écoute les sons en arrière-plan (Transcrire) : je te dis ce qu'ils sont dès qu'ils arrivent."}.get(sent[0], "")
+        else:
+            more = ""
         t = update_turn(bid, tid, lambda x: x["reception"].update(text=x["reception"]["text"] + " Je lis le brief et le début de chaque document, "
                                                                   "puis je te pose quelques questions ; rien ne se pose sur la planche avant tes réponses." + more))
     return {"turn": public_turn(t), "job": jobs.public(j), "paliers": paliers, "accuse": acc}
@@ -2785,6 +2793,13 @@ def selftest(call, ok) -> None:
         ok(st == 400 and st2 == 200 and j.get("state") == "done" and fmt and fmt[0]["messages"][0]["content"] == INGEST_TASK
            and "Rotonde" in fmt[0]["messages"][1]["content"],
            f"agent : {MAX_ITEMS + 3} objets cités : refusés pour un message, pris pour l'entrée, le document lu en aperçu ({st} {st2} {j.get('state')})")
+        # une entrée sans image ni son : aucun palier, la route répond 200 (portail d'essai du 09/10 : _et([]) levait
+        # IndexError dans r_turn, la route répondait 500)
+        st, r = call("POST", "/api/ideation/agent", {"board": bid, "intent": "ingest", "messages": [{"role": "user", "content": "un brief", "items": [did]}]})
+        wait(r["job"]["id"]) if st == 200 else None
+        rec = ((r.get("turn") or {}).get("reception") or {}).get("text", "") if st == 200 else ""
+        ok(st == 200 and r.get("paliers") == [] and "arrière-plan" not in rec and _et([]) == "",
+           f"agent : une entrée sans image ni son, aucun palier, la route répond 200 ({st} {rec!r:.160})")
         for body, why in (({"board": bid, "messages": []}, "sans message"),
                           ({"board": bid, "messages": [{"role": "user", "content": "x", "items": ["ima-20990101-000000-0000"]}]}, "un objet absent"),
                           ({"board": bid, "messages": [{"role": "user", "content": "x", "items": ["zz"]}]}, "un objet hors de la planche"),
