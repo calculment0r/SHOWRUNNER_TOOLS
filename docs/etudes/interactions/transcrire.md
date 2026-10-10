@@ -89,7 +89,8 @@ Les frictions vues :
   l'autre [3].
 - **Coût** : moyen (la sélection de texte vers une plage : les mots ont leur instant en mode Complet ; la découpe
   existe côté serveur pour les exports du Montage, ffmpeg). **Dépend de** : le mode Complet (en Rapide, une
-  réplique entière est le plus petit morceau).
+  réplique entière est le plus petit morceau) ; une réplique corrigée perd l'instant exact de ses mots, répartis au
+  prorata (`seg_words`, `server/tools/transcrire.py`) : la coupe y est moins précise.
 
 ### 4. Le carnet qui s'écrit seul — rapide
 
